@@ -945,6 +945,15 @@ function sectionOutline(sec) {
  *   [{ xle, chord, sec, org:Vector3, spanDir:Vector3, thickDir:Vector3, twist }]
  * xle is measured along +X; org is the point on the span axis for that station.
  */
+/** Rotate a geometry's vertices about an arbitrary axis through a point. */
+function rotateGeometryAbout(geo, pivot, axis, angleRad) {
+  const m = new THREE.Matrix4().makeRotationAxis(axis.clone().normalize(), angleRad);
+  geo.translate(-pivot.x, -pivot.y, -pivot.z);
+  geo.applyMatrix4(m);
+  geo.translate(pivot.x, pivot.y, pivot.z);
+  return geo;
+}
+
 function surfaceMesh(stations) {
   const rings = stations.map(st => {
     const out = sectionOutline(st.sec);
@@ -1471,6 +1480,12 @@ function buildDigitalFlaps(cse, pf, sf, sec, warn, opts) {
       }
       const L = B[B.length - 1]; return { c: L.chord, xle: L.xle, z: L.z };
     };
+    const gI = chordAt(spanI), gO = chordAt(spanO);
+    // Hinge line endpoints: the flap chord is measured forward from the wing
+    // trailing edge, so the hinge is swept whenever the flap chord ratio or the
+    // wing chord varies across the span, and tilted wherever there is dihedral.
+    const hinge = s => [V3(sf.x + gI.xle + gI.c - chI, s * spanI, sf.z + gI.z),
+                        V3(sf.x + gO.xle + gO.c - chO, s * spanO, sf.z + gO.z)];
     const shown = [];
     for (const s of (opts.mirror ? [1, -1] : [1])) {
       const defl = deflFn(s) * opts.defScale;
@@ -1481,25 +1496,32 @@ function buildDigitalFlaps(cse, pf, sf, sec, warn, opts) {
                  org: V3(0, s * y, sf.z + g.z), thickDir: V3(0, 0, 1), spanDir: V3(0, s, 0), pivot: 0 };
       });
       const geo = surfaceMesh(sts);
-      let m;
       if (Math.abs(defl) > 1e-9) {
-        const gI = chordAt(spanI);
-        const pivot = V3(sf.x + gI.xle + gI.c - chI, 0, sf.z + gI.z);
-        geo.translate(-pivot.x, -pivot.y, -pivot.z);
+        // rotate about the real hinge line, axis pointing outboard so that a
+        // positive deflection is trailing edge down on both sides
+        const [hIn, hOut] = hinge(s);
+        rotateGeometryAbout(geo, hIn, hOut.clone().sub(hIn), s * defl * D2R);
+      }
+      // carry the parent surface's root incidence, exactly as the wing does, so
+      // the flap stays attached to the trailing edge when ALIW is non-zero.
+      // The geometry must be recentred before meshFor, which extracts the edges.
+      let m;
+      if (Math.abs(sf.inc) > 1e-9) {
+        const apex = V3(sf.x, 0, sf.z);
+        geo.translate(-apex.x, -apex.y, -apex.z);
         m = meshFor(geo, "flap");
-        m.position.copy(pivot);
-        // +delta = trailing edge down, mirrored consistently on the port side
-        m.quaternion.setFromAxisAngle(V3(0, s, 0), s * defl * D2R);
+        m.position.copy(apex);
+        m.quaternion.setFromAxisAngle(V3(0, 1, 0), sf.inc * D2R);
       } else {
         m = meshFor(geo, "flap");
       }
       meshes.push(m);
     }
-    const gI = chordAt(spanI), gO = chordAt(spanO);
-    for (const s of (opts.mirror ? [1, -1] : [1])) {
-      HINGES.push([V3(sf.x + gI.xle + gI.c - chI, s * spanI, sf.z + gI.z),
-                   V3(sf.x + gO.xle + gO.c - chO, s * spanO, sf.z + gO.z)]);
-    }
+    // the hinge overlay lives outside the model group, so apply incidence to it too
+    const withInc = p => Math.abs(sf.inc) < 1e-9 ? p
+      : p.clone().sub(V3(sf.x, 0, sf.z)).applyAxisAngle(V3(0, 1, 0), sf.inc * D2R)
+         .add(V3(sf.x, 0, sf.z));
+    for (const s of (opts.mirror ? [1, -1] : [1])) HINGES.push(hinge(s).map(withInc));
     addPart(name, "flap", meshes, {
       "Span station in/out": `${fmt(spanI)} → ${fmt(spanO)}`,
       "Flap chord in/out": `${fmt(chI)} → ${fmt(chO)}`,
@@ -1951,6 +1973,10 @@ camber is drawn only for 4-digit sections. Supply <code>xxSCHR</code> coordinate
 exact section.</p>
 <p class="sub">• Protuberances are simplified primitives; inlets are lofted ducts through
 the five X/H/W stations without internal cowl or ramp detail.</p>
+<p class="sub">• Control surfaces rotate about their true hinge line, which follows the
+wing's sweep and dihedral, and carry the root incidence. They do not follow
+<code>TWISTA</code>, so on a strongly twisted wing the outboard end of a flap can sit
+slightly proud of the trailing edge.</p>
 <p class="sub">• Nose bluntness solves for the virtual sharp-nose length so that the
 drawn nose measures exactly <code>LNOSE</code> (Figure 3). With option 2 body tables the
 points are drawn as given.</p>

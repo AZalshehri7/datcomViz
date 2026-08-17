@@ -102,6 +102,9 @@ The Messages panel flags these per deck as they apply.
   t/c implied by the last two digits; camber is drawn only for 4-digit sections. Supply
   `xxSCHR` coordinates for an exact section.
 - Protuberances are simplified primitives; inlets have no internal cowl or ramp detail.
+- Control surfaces rotate about their true hinge line, which follows the wing's sweep and
+  dihedral, and carry the root incidence. They do not follow `TWISTA`, so on a strongly
+  twisted wing the outboard end of a flap can sit slightly proud of the trailing edge.
 - Where a deck is self-inconsistent the tool follows DATCOM and says so. A wing that
   declares `TYPE=1.` (straight tapered) while also supplying `CHRDBP`/`SSPNOP` is a
   common case: DATCOM ignores the breakpoint, so the reported planform area will not
