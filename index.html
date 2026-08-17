@@ -1,0 +1,1963 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="Browser-based geometry viewer for DATCOM input decks. Drop a deck in and see the configuration in 3D. Runs entirely in the browser — nothing is uploaded.">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#14171c">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%2314171c'/%3E%3Cpath d='M20 15.6l6-8.4h2.6l-3.4 8.4z' fill='%234da3ff'/%3E%3Cpath d='M20 16.4l6 8.4h2.6l-3.4-8.4z' fill='%234da3ff'/%3E%3Cpath d='M3.5 16c5-2.2 12-3.4 24.5-3.4v6.8C15.5 19.4 8.5 18.2 3.5 16z' fill='%23aab4c2'/%3E%3C/svg%3E">
+<title>datcomViz — DATCOM geometry viewer</title>
+<style>
+  :root{
+    --bg:#14171c; --panel:#1c2027; --panel2:#22272f; --line:#2e3540;
+    --fg:#dfe4ea; --dim:#8d97a5; --accent:#4da3ff; --warn:#e0a33c; --err:#e06c5c;
+    --body-col:#5b6472; --fin-col:#4da3ff; --wing-col:#4da3ff;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;overflow:hidden;
+    font:13px/1.45 ui-sans-serif,system-ui,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    background:var(--bg);color:var(--fg)}
+  #app{display:flex;height:100%}
+  /* ---------- sidebar ---------- */
+  #side{width:330px;min-width:330px;height:100%;overflow-y:auto;background:var(--panel);
+    border-right:1px solid var(--line)}
+  #side::-webkit-scrollbar{width:9px}
+  #side::-webkit-scrollbar-thumb{background:#39414d;border-radius:5px}
+  .brand{padding:14px 14px 10px;border-bottom:1px solid var(--line)}
+  .brand h1{margin:0;font-size:15px;letter-spacing:.4px}
+  .brand p{margin:3px 0 0;color:var(--dim);font-size:11px}
+  section.grp{border-bottom:1px solid var(--line)}
+  section.grp>h2{margin:0;padding:9px 14px;font-size:11px;text-transform:uppercase;
+    letter-spacing:.9px;color:var(--dim);cursor:pointer;user-select:none;display:flex;
+    justify-content:space-between;align-items:center}
+  section.grp>h2:hover{color:var(--fg)}
+  section.grp>h2 .chev{transition:transform .15s;font-size:9px}
+  section.grp.collapsed>h2 .chev{transform:rotate(-90deg)}
+  section.grp.collapsed>.body{display:none}
+  .body{padding:4px 14px 13px}
+  /* ---------- controls ---------- */
+  #drop{border:1.5px dashed #3a444f;border-radius:7px;padding:16px 10px;
+    text-align:center;color:var(--dim);cursor:pointer;transition:.15s;font-size:12px}
+  #drop:hover,#drop.over{border-color:var(--accent);color:var(--fg);background:#1a222c}
+  .row{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+  button{background:var(--panel2);color:var(--fg);border:1px solid var(--line);border-radius:5px;
+    padding:5px 9px;font-size:11.5px;cursor:pointer;font-family:inherit}
+  button:hover{border-color:var(--accent);color:#fff}
+  button.on{background:var(--accent);border-color:var(--accent);color:#0d1116;font-weight:600}
+  select,input[type=text]{background:var(--panel2);color:var(--fg);border:1px solid var(--line);
+    border-radius:5px;padding:4px 6px;font-size:12px;width:100%;font-family:inherit}
+  label.chk{display:flex;align-items:center;gap:7px;padding:2.5px 0;cursor:pointer;font-size:12px}
+  label.chk input{accent-color:var(--accent);margin:0}
+  .swatch{width:10px;height:10px;border-radius:2px;flex:0 0 auto}
+  .sub{color:var(--dim);font-size:11px}
+  .slider{display:flex;align-items:center;gap:8px;margin-top:6px}
+  .slider input[type=range]{flex:1;accent-color:var(--accent)}
+  .slider span{width:46px;text-align:right;font-variant-numeric:tabular-nums;color:var(--dim)}
+  /* ---------- tables ---------- */
+  table.kv{width:100%;border-collapse:collapse;font-size:11.5px}
+  table.kv td{padding:2px 0;vertical-align:top}
+  table.kv td.k{color:var(--dim);padding-right:8px;white-space:nowrap}
+  table.kv td.v{text-align:right;font-variant-numeric:tabular-nums}
+  .partstat{margin:7px 0 0;padding:7px 9px;background:var(--panel2);border-radius:5px;
+    border-left:2px solid var(--accent)}
+  .partstat h4{margin:0 0 4px;font-size:11.5px;letter-spacing:.3px}
+  .msg{padding:6px 9px;border-radius:5px;margin-bottom:6px;font-size:11.5px;line-height:1.4}
+  .msg.warn{background:#2e2717;border-left:2px solid var(--warn)}
+  .msg.err{background:#2e1c1a;border-left:2px solid var(--err)}
+  .msg.info{background:#18242e;border-left:2px solid var(--accent)}
+  .msg.local{background:#17241e;border-left:2px solid #59d09a;color:#a9bdb2;
+    margin:9px 0 0;font-size:11px}
+  pre.raw{margin:0;font:11px/1.4 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    white-space:pre-wrap;word-break:break-word;color:#b9c2cf;max-height:340px;overflow:auto}
+  /* ---------- viewport ---------- */
+  #view{flex:1;position:relative;min-width:0}
+  #cv{display:block;width:100%;height:100%}
+  #hud{position:absolute;left:12px;bottom:10px;color:var(--dim);font-size:11px;
+    text-shadow:0 1px 3px #000;pointer-events:none;line-height:1.5}
+  #vbar{position:absolute;top:10px;left:12px;display:flex;gap:5px;flex-wrap:wrap}
+  #title{position:absolute;top:10px;right:12px;text-align:right;pointer-events:none;
+    text-shadow:0 1px 4px #000}
+  #title b{font-size:13px}#title span{display:block;color:var(--dim);font-size:11px}
+  #empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+    flex-direction:column;gap:8px;color:#4c5665;text-align:center;padding:20px}
+  #empty h3{margin:0;font-size:17px;color:#6b7787;font-weight:600}
+  /* narrow screens: stack the viewport above a scrolling control panel */
+  @media (max-width:760px){
+    #app{flex-direction:column-reverse}
+    #side{width:100%;min-width:0;height:auto;max-height:52vh;
+      border-right:none;border-top:1px solid var(--line)}
+    #view{flex:none;height:48vh}
+    #vbar{gap:4px}#vbar button{padding:4px 7px;font-size:11px}
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="side">
+    <div class="brand">
+      <h1>datcomViz</h1>
+      <p>Geometry viewer for DATCOM input decks</p>
+    </div>
+
+    <section class="grp" id="g-file"><h2>Input deck <span class="chev">▼</span></h2>
+      <div class="body">
+        <div id="drop">Drop a deck here<br><span class="sub">or click to browse — for005.dat, .dcm, .inp, .txt</span></div>
+        <input type="file" id="file" hidden accept=".dat,.dcm,.inp,.txt,.for,.005,*">
+        <div class="msg local">Your deck stays on this device. It is read and drawn
+          entirely in the browser — nothing is uploaded, stored or sent anywhere, and the
+          page keeps working with the network off.</div>
+        <div id="caseWrap" style="display:none;margin-top:9px">
+          <div class="sub" style="margin-bottom:3px">Case</div>
+          <select id="caseSel"></select>
+        </div>
+      </div>
+    </section>
+
+    <section class="grp" id="g-msg"><h2>Messages <span class="chev">▼</span></h2>
+      <div class="body" id="msgs"><span class="sub">Load a deck to see parser messages.</span></div>
+    </section>
+
+    <section class="grp" id="g-parts"><h2>Components <span class="chev">▼</span></h2>
+      <div class="body" id="parts"><span class="sub">No deck loaded.</span></div>
+    </section>
+
+    <section class="grp" id="g-disp"><h2>Display <span class="chev">▼</span></h2>
+      <div class="body">
+        <div class="row" id="modeRow">
+          <button data-mode="solid" class="on">Solid</button>
+          <button data-mode="edges">Solid + edges</button>
+          <button data-mode="wire">Wireframe</button>
+          <button data-mode="xray">X-ray</button>
+        </div>
+        <div style="margin-top:9px">
+          <label class="chk"><input type="checkbox" id="o-axes" checked> Body axes (X aft, Y stbd, Z up)</label>
+          <label class="chk"><input type="checkbox" id="o-grid" checked> Ground grid</label>
+          <label class="chk"><input type="checkbox" id="o-cl" checked> Centerline</label>
+          <label class="chk"><input type="checkbox" id="o-cg" checked> CG marker (XCG)</label>
+          <label class="chk"><input type="checkbox" id="o-rings"> Body station rings</label>
+          <label class="chk"><input type="checkbox" id="o-hinge"> Fin hinge lines</label>
+          <label class="chk"><input type="checkbox" id="o-mirror" checked> Mirror half-span surfaces</label>
+        </div>
+        <div class="slider"><span class="sub" style="width:auto">Deflection</span>
+          <input type="range" id="defScale" min="0" max="1" step="0.05" value="1">
+          <span id="defScaleV">100%</span></div>
+        <div class="sub" style="margin-top:3px">Scales DEFLCT / SYMFLP deflection angles for visualisation.</div>
+        <div id="flapWrap" style="display:none;margin-top:9px">
+          <div class="sub" style="margin-bottom:3px">Control deflection schedule</div>
+          <select id="flapSel"></select>
+        </div>
+      </div>
+    </section>
+
+    <section class="grp collapsed" id="g-stats"><h2>Derived geometry <span class="chev">▼</span></h2>
+      <div class="body" id="stats"><span class="sub">No deck loaded.</span></div>
+    </section>
+
+    <section class="grp collapsed" id="g-raw"><h2>Parsed namelists <span class="chev">▼</span></h2>
+      <div class="body"><pre class="raw" id="raw">—</pre></div>
+    </section>
+
+    <section class="grp collapsed" id="g-about"><h2>Notes &amp; limitations <span class="chev">▼</span></h2>
+      <div class="body" id="about"></div>
+    </section>
+  </div>
+
+  <div id="view">
+    <canvas id="cv"></canvas>
+    <div id="vbar">
+      <button data-view="iso">Iso</button><button data-view="side">Side</button>
+      <button data-view="top">Top</button><button data-view="front">Front</button>
+      <button data-view="rear">Rear</button><button data-view="fit">Fit</button>
+      <button id="snap">Save PNG</button>
+    </div>
+    <div id="title"></div>
+    <div id="hud"></div>
+    <div id="empty"><h3>No geometry loaded</h3>
+      <div>Drop a DATCOM input deck on the left panel to draw its geometry.</div>
+      <div style="font-size:11.5px;color:#3f4854">Everything runs locally in your browser — your deck is never uploaded.</div></div>
+  </div>
+</div>
+
+<script src="vendor/three.min.js"></script>
+<script src="vendor/OrbitControls.js"></script>
+<script>
+"use strict";
+/* =======================================================================
+   datcomViz — geometry visualiser for DATCOM input decks.  View-only: nothing is written, nothing leaves the browser.
+
+   Conventions implemented (per the 2011 revision of the user's manual,
+   Figures 2, 3, 7, 9, 11, 13, and the input namelist reference):
+     * body axes  : +X aft (nose to tail), +Y starboard, +Z up
+     * PHIF / PHI : measured clockwise from top vertical centre, looking
+                    forward from behind the missile  =>  unit vector
+                    (0, sin PHIF, cos PHIF)
+     * GAM        : panel dihedral, positive in the direction of increasing PHIF
+     * DELTAn     : positive deflection = right-hand rotation about the panel's
+                    outboard (span) axis; puts the LE of a top-mounted panel
+                    toward -Y, per Figure 13
+     * XLE        : from the body nose;  XHINGE from the coordinate origin
+     * SSPAN      : from the vehicle centreline (SSPAN(1)=0 => relative to the
+                    root chord, auto-placed on the body mould line)
+     * STA        : chord station at which SWEEP is measured (0 = LE, 1 = TE)
+   ======================================================================= */
+
+const D2R = Math.PI / 180, R2D = 180 / Math.PI;
+const isNum = v => typeof v === "number" && isFinite(v);
+const fmt = (v, d = 3) => (isNum(v) ? (Math.abs(v) >= 1e5 || (v !== 0 && Math.abs(v) < 1e-3)
+  ? v.toExponential(2) : (+v.toFixed(d)).toString()) : "—");
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+
+/* =======================================================================
+   1.  FORTRAN NAMELIST PARSER
+   ======================================================================= */
+
+/** Split a raw deck into namelist blocks and free-standing control cards. */
+function tokenizeDeck(text) {
+  const src = text.replace(/\r\n?/g, "\n")
+    .split("\n").map(l => (/^\s*\*/.test(l) ? "" : l)).join("\n"); // '*' = comment
+  const items = [];
+  let card = "", i = 0;
+  const flushCard = () => {
+    card.split("\n").forEach(l => {
+      const t = l.trim();
+      if (t && !/^\$?END$/i.test(t) && t !== "/") items.push({ type: "card", text: t });
+    });
+    card = "";
+  };
+  while (i < src.length) {
+    const c = src[i];
+    if (c === "$" || c === "&") {
+      const m = /^[$&]([A-Za-z][A-Za-z0-9_]*)/.exec(src.slice(i));
+      if (m && !/^END$/i.test(m[1])) {
+        flushCard();
+        const start = i + m[0].length;
+        let j = start;
+        while (j < src.length) {                      // find block terminator
+          const d = src[j];
+          if (d === "$" || d === "&") break;
+          if (d === "/" && /\n\s*$/.test(src.slice(Math.max(0, j - 40), j))
+              && /^\s*(\n|$)/.test(src.slice(j + 1))) break;
+          j++;
+        }
+        let k = j + 1;
+        if (/^END/i.test(src.slice(k))) k += 3;       // "$END" / "&END"
+        items.push({ type: "nl", name: m[1].toUpperCase(), body: src.slice(start, j) });
+        i = k; continue;
+      }
+    }
+    card += c; i++;
+  }
+  flushCard();
+  return items;
+}
+
+/** Parse one scalar token: number, logical, or bare keyword. */
+function parseScalar(tok) {
+  const t = tok.trim();
+  if (!t) return undefined;
+  if (/^\.?(T|TRUE)\.?$/i.test(t)) return true;
+  if (/^\.?(F|FALSE)\.?$/i.test(t)) return false;
+  const num = t.replace(/[Dd]/g, "E");
+  if (/^[+-]?(\d+\.?\d*|\.\d+)(E[+-]?\d+)?$/i.test(num)) return parseFloat(num);
+  return t.replace(/^['"]|['"]$/g, "").toUpperCase();
+}
+
+/** Parse a comma-separated Fortran value list, expanding "n*value" repeats. */
+function parseValueList(s) {
+  const out = [];
+  s.split(",").forEach(raw => {
+    const t = raw.trim();
+    if (!t) return;
+    const rep = /^(\d+)\s*\*\s*(.+)$/.exec(t);
+    if (rep) { const v = parseScalar(rep[2]); for (let n = +rep[1]; n > 0; n--) out.push(v); }
+    else out.push(parseScalar(t));
+  });
+  return out;
+}
+
+/** Parse a namelist body into { VAR: sparse array of values }. */
+function parseAssignments(body) {
+  const out = {};
+  const re = /([A-Za-z][A-Za-z0-9_]*)\s*(?:\(\s*(\d+)\s*\))?\s*=/g;
+  const ms = [...body.matchAll(re)];
+  ms.forEach((m, a) => {
+    const name = m[1].toUpperCase();
+    const base = m[2] ? parseInt(m[2], 10) : 1;
+    const end = a + 1 < ms.length ? ms[a + 1].index : body.length;
+    const vals = parseValueList(body.slice(m.index + m[0].length, end));
+    if (!out[name]) out[name] = [];
+    vals.forEach((v, k) => { out[name][base - 1 + k] = v; });
+  });
+  return out;
+}
+
+function mergeNamelist(dst, src) {
+  for (const k in src) {
+    if (!dst[k]) dst[k] = [];
+    src[k].forEach((v, i) => { if (v !== undefined) dst[k][i] = v; });
+  }
+}
+const deepCopyNL = nl => JSON.parse(JSON.stringify(nl));
+
+/**
+ * Parse a full deck into cases.
+ *
+ * Case-to-case namelist persistence differs between the two codes:
+ *   BODY/SYNTHS decks retain inputs from case to case automatically.
+ *   AXIBOD/FINSET decks only carry a case's namelists forward when that case
+ *   contains a SAVE control card, and DELETE purges named ones (manual §3.2.2).
+ */
+function parseDeck(text) {
+  const items = tokenizeDeck(text);
+  // sniff the flavour up front — it decides the NEXT CASE persistence rule
+  const names = new Set(items.filter(i => i.type === "nl").map(i => i.name));
+  const mScore = ["AXIBOD", "ELLBOD", "PROTUB", "INLET", "REFQ", "DEFLCT"].filter(n => names.has(n)).length
+               + [...names].filter(n => /^FINSET[1-9]$/.test(n)).length;
+  const dScore = ["BODY", "SYNTHS", "WGPLNF", "HTPLNF", "VTPLNF", "VFPLNF", "OPTINS", "SYMFLP", "ASYFLP", "TVTPAN"]
+    .filter(n => names.has(n)).length;
+  const missile = mScore >= dScore && mScore > 0;
+
+  const cases = [];
+  const blank = () => ({ title: "", nl: {}, cards: [], airfoils: [], units: "",
+                         own: 0, save: false, del: [], inherited: new Set(), fresh: new Set() });
+  let cur = blank();
+  const push = () => {
+    // apply DELETE: purge inherited namelists that were not re-specified here
+    cur.del.forEach(n => { if (cur.inherited.has(n) && !cur.fresh.has(n)) delete cur.nl[n]; });
+    cases.push(cur);
+  };
+  for (const it of items) {
+    if (it.type === "nl") {
+      if (!cur.nl[it.name]) cur.nl[it.name] = {};
+      mergeNamelist(cur.nl[it.name], parseAssignments(it.body));
+      cur.fresh.add(it.name);
+      cur.own++;
+      continue;
+    }
+    const t = it.text;
+    if (/^NEXT\s+CASE/i.test(t)) {
+      push();
+      const carry = missile ? cur.save : true;
+      const next = blank();
+      next.units = cur.units;                      // DIM persists for the whole run
+      if (carry) {
+        next.nl = deepCopyNL(cur.nl);
+        next.airfoils = cur.airfoils.slice();
+        next.inherited = new Set(Object.keys(next.nl));
+      }
+      cur = next;
+      continue;
+    }
+    cur.own++;
+    if (/^SAVE\b/i.test(t)) { cur.save = true; cur.cards.push(t); continue; }
+    if (/^DELETE\b/i.test(t)) {
+      t.replace(/^DELETE\s*/i, "").split(/[,\s]+/).filter(Boolean)
+        .forEach(n => cur.del.push(n.toUpperCase()));
+      cur.cards.push(t); continue;
+    }
+    if (/^CASEID/i.test(t)) { cur.title = t.replace(/^CASEID\s*/i, "").trim(); cur.cards.push(t); continue; }
+    if (/^DIM\s+/i.test(t)) { cur.units = t.split(/\s+/)[1].toUpperCase(); cur.cards.push(t); continue; }
+    // NACA-<finset|surface>-<series>-<designation>; series 1,4,5,6 or S (supersonic)
+    const af = /^NACA[\s-]+([A-Za-z0-9])[\s-]+([1456S])[\s-]+(\S.*)$/i.exec(t);
+    if (af) {
+      const ser = af[2].toUpperCase();
+      cur.airfoils.push({ key: af[1].toUpperCase(), series: ser === "S" ? "S" : +ser,
+                          desig: af[3].trim().toUpperCase(), raw: t });
+      continue;
+    }
+    cur.cards.push(t);
+  }
+  push();
+  // drop a trailing case created by a final "NEXT CASE" with nothing after it
+  while (cases.length > 1 && cases[cases.length - 1].own === 0) cases.pop();
+  return cases;
+}
+
+/* ---- namelist accessors -------------------------------------------------- */
+const NL = (c, n) => (c.nl[n] || null);
+function num(nl, k, dflt) { const v = nl && nl[k] && nl[k][0]; return isNum(v) ? v : dflt; }
+function bool(nl, k, dflt) { const v = nl && nl[k] && nl[k][0]; return typeof v === "boolean" ? v : dflt; }
+function str(nl, k, dflt) { const v = nl && nl[k] && nl[k][0]; return (typeof v === "string") ? v : (isNum(v) ? v : dflt); }
+function arr(nl, k) {
+  if (!nl || !nl[k]) return [];
+  const a = nl[k]; const out = [];
+  for (let i = 0; i < a.length; i++) out.push(a[i]);
+  while (out.length && out[out.length - 1] === undefined) out.pop();
+  return out;
+}
+/** Dense numeric array, stopping at the first hole. */
+function narr(nl, k) {
+  const a = arr(nl, k), out = [];
+  for (const v of a) { if (!isNum(v)) break; out.push(v); }
+  return out;
+}
+
+/* =======================================================================
+   2.  AIRFOIL / SECTION SHAPES
+   Every section is returned as a pair of functions of x/c in [0,1] giving
+   the upper and lower surface ordinates as a fraction of chord.
+   ======================================================================= */
+
+const naca4Thick = (x, t) => 5 * t * (0.2969 * Math.sqrt(x) - 0.1260 * x
+  - 0.3516 * x * x + 0.2843 * x ** 3 - 0.1015 * x ** 4);
+
+function naca4Camber(x, m, p) {
+  if (m <= 0 || p <= 0) return 0;
+  return x < p ? (m / (p * p)) * (2 * p * x - x * x)
+               : (m / ((1 - p) ** 2)) * ((1 - 2 * p) + 2 * p * x - x * x);
+}
+
+/** Circular-arc surface of max half-thickness t at mid-chord. */
+function arcSurf(x, t) {
+  if (t <= 0) return 0;
+  const R = (0.25 + t * t) / (2 * t);
+  return Math.sqrt(Math.max(0, R * R - (x - 0.5) ** 2)) + (t - R);
+}
+
+/** Piecewise-linear HEX half-surface: 0 -> zmax at lmax -> flat -> 0 at TE. */
+function hexSurf(x, z, lmax, lflat) {
+  const a = clamp(lmax, 0, 1), b = clamp(lmax + lflat, 0, 1);
+  if (x <= a) return a > 0 ? z * (x / a) : z;
+  if (x <= b) return z;
+  return b < 1 ? z * (1 - x) / (1 - b) : z;
+}
+
+/** Interpolate a tabulated y(x/c) curve. */
+function tableSurf(xs, ys) {
+  return x => {
+    if (!xs.length) return 0;
+    if (x <= xs[0]) return ys[0];
+    if (x >= xs[xs.length - 1]) return ys[ys.length - 1];
+    let i = 1; while (i < xs.length - 1 && xs[i] < x) i++;
+    const f = (x - xs[i - 1]) / (xs[i] - xs[i - 1] || 1);
+    return ys[i - 1] + f * (ys[i] - ys[i - 1]);
+  };
+}
+
+/**
+ * Supersonic NACA control-card sections (manual Table 18):
+ *   type 1  diamond      "1-<xmax%>-<t%>"            e.g. NACA-1-S-1-45-6
+ *   type 2  circular arc "2-<xmax%>-<t%>"            e.g. NACA-1-S-2-50-7
+ *   type 3  hexagonal    "3-<xmax%>-<t%>-<flat%>"    e.g. NACA-1-S-3-25-5-50
+ * Thickness is the total t/c, so each surface carries half of it.
+ */
+function supersonicSpec(desig) {
+  const p = String(desig).split(/[-\s]+/).filter(Boolean).map(parseFloat);
+  const kind = p[0], xmax = (p[1] || 50) / 100, half = (p[2] || 5) / 200;
+  if (kind === 2) return { type: "ARC", zu: half, zl: half };
+  const flat = kind === 3 ? (p[3] || 0) / 100 : 0;
+  return { type: "HEX", zu: half, zl: half, lmu: xmax, lml: xmax, lfu: flat, lfl: flat };
+}
+
+/** Thickness (t/c) implied by a NACA designation string. */
+function naca4or5Thickness(series, desig) {
+  const d = String(desig).replace(/[^0-9]/g, "");
+  if (series === 4 && d.length >= 4) return +d.slice(2, 4) / 100;
+  if (series === 5 && d.length >= 5) return +d.slice(3, 5) / 100;
+  if (d.length >= 2) return +d.slice(-2) / 100;   // 1-, 6-, 7-series: last two digits
+  return 0.06;
+}
+
+/**
+ * Build {up(x), lo(x), label} for a section.
+ *  spec = {type:'HEX'|'ARC'|'NACA'|'USER'|'TC', ...}
+ */
+function makeSection(spec) {
+  switch (spec.type) {
+    case "HEX": {
+      const { zu, zl, lmu, lml, lfu, lfl } = spec;
+      return { up: x => hexSurf(x, zu, lmu, lfu), lo: x => -hexSurf(x, zl, lml, lfl),
+               label: `HEX t/c ${fmt(zu + zl, 3)}` };
+    }
+    case "ARC":
+      return { up: x => arcSurf(x, spec.zu), lo: x => -arcSurf(x, spec.zl),
+               label: `ARC t/c ${fmt(spec.zu + spec.zl, 3)}` };
+    case "USER": {
+      if (spec.yu && spec.yl) return { up: tableSurf(spec.xc, spec.yu), lo: tableSurf(spec.xc, spec.yl), label: "USER coords" };
+      const mean = tableSurf(spec.xc, spec.mean || spec.xc.map(() => 0));
+      const th = tableSurf(spec.xc, spec.thick || spec.xc.map(() => 0));
+      return { up: x => mean(x) + th(x) / 2, lo: x => mean(x) - th(x) / 2, label: "USER mean+thickness" };
+    }
+    case "NACA": {
+      if (spec.series === "S") {
+        const s = makeSection(supersonicSpec(spec.desig));
+        return { up: s.up, lo: s.lo, label: `NACA supersonic ${spec.desig}` };
+      }
+      const d = String(spec.desig).replace(/[^0-9]/g, "");
+      const t = naca4or5Thickness(spec.series, spec.desig);
+      let m = 0, p = 0;
+      if (spec.series === 4 && d.length >= 4) { m = +d[0] / 100; p = +d[1] / 10; }
+      return { up: x => naca4Camber(x, m, p) + naca4Thick(x, t),
+               lo: x => naca4Camber(x, m, p) - naca4Thick(x, t),
+               label: `NACA ${spec.desig} (t/c ${fmt(t, 3)})` };
+    }
+    default: { // plain thickness ratio, symmetric NACA-00xx shape
+      const t = spec.tc || 0.05;
+      return { up: x => naca4Thick(x, t), lo: x => -naca4Thick(x, t),
+               label: `t/c ${fmt(t, 3)}` };
+    }
+  }
+}
+
+/* =======================================================================
+   3.  BODY PROFILE GENERATORS  (AXIBOD / ELLBOD option 1)
+   All return r(x) normalised: r at x=L equals R.
+   ======================================================================= */
+
+function noseProfile(shape, L, R, powerN) {
+  const s = String(shape).toUpperCase();
+  if (s === "CONE" || s === "CONICAL" || s === "0" || shape === 0) return x => R * (x / L);
+  if (s === "POWER" || shape === 2) { const n = powerN > 0 ? powerN : 0.5; return x => R * Math.pow(clamp(x / L, 0, 1), n); }
+  if (s === "HAACK" || shape === 3 || s === "KARMAN" || shape === 4) {
+    const C = (s === "HAACK" || shape === 3) ? 1 / 3 : 0;      // LV-Haack vs von Karman (LD)
+    return x => {
+      const th = Math.acos(clamp(1 - 2 * clamp(x / L, 0, 1), -1, 1));
+      return R / Math.sqrt(Math.PI) * Math.sqrt(Math.max(0, th - Math.sin(2 * th) / 2 + C * Math.sin(th) ** 3));
+    };
+  }
+  // default: tangent ogive
+  const rho = (R * R + L * L) / (2 * R);
+  return x => Math.sqrt(Math.max(0, rho * rho - (L - clamp(x, 0, L)) ** 2)) + R - rho;
+}
+
+function aftProfile(shape, L, R0, R1) {
+  const s = String(shape).toUpperCase();
+  if (s === "OGIVE" || shape === 1) {
+    // tangent-ogive boattail/flare: circular arc tangent to the centrebody at x=0
+    const dR = R1 - R0;
+    if (Math.abs(dR) < 1e-12 || L <= 0) return () => R0;
+    const rho = (L * L + dR * dR) / (2 * Math.abs(dR));
+    const sgn = Math.sign(dR);
+    return x => R0 + sgn * (rho - Math.sqrt(Math.max(0, rho * rho - x * x)));
+  }
+  return x => R0 + (R1 - R0) * (L > 0 ? x / L : 0);            // cone / frustum
+}
+
+/**
+ * Apply nose bluntness or truncation while preserving the *physical* nose
+ * length LNOSE, by solving for the virtual sharp-nose length (Figure 3).
+ * Returns { xs:[], rs:[], capFace:number|null, virtualL:number }
+ */
+function bluntNose(shape, LNOSE, R, powerN, BNOSE, TRUNC, nPts) {
+  const sample = (Lv) => {
+    const f = noseProfile(shape, Lv, R, powerN);
+    if (TRUNC) {                                   // flat face where r = BNOSE
+      let xt = 0, lo = 0, hi = Lv;
+      for (let i = 0; i < 60; i++) { xt = (lo + hi) / 2; if (f(xt) < BNOSE) lo = xt; else hi = xt; }
+      return { xt, xStart: xt, cap: null, f };
+    }
+    // spherical cap: tangency where r*sqrt(1+r'^2) = BNOSE
+    const dr = x => { const h = Lv * 1e-5; return (f(x + h) - f(Math.max(0, x - h))) / (x >= h ? 2 * h : h); };
+    let xt = 0, lo = 1e-9, hi = Lv;
+    for (let i = 0; i < 60; i++) {
+      xt = (lo + hi) / 2;
+      if (f(xt) * Math.sqrt(1 + dr(xt) ** 2) < BNOSE) lo = xt; else hi = xt;
+    }
+    const d = dr(xt), den = Math.sqrt(1 + d * d);
+    const xc = xt + BNOSE * d / den;               // sphere centre on the axis
+    return { xt, xStart: xc - BNOSE, cap: { xc, xt }, f };
+  };
+  // solve virtual length so the retained nose measures exactly LNOSE
+  let Lv = LNOSE, lo = LNOSE, hi = LNOSE * 6 + BNOSE * 6;
+  for (let i = 0; i < 70; i++) {
+    Lv = (lo + hi) / 2;
+    const s = sample(Lv);
+    if ((Lv - s.xStart) < LNOSE) lo = Lv; else hi = Lv;
+  }
+  const s = sample(Lv);
+  const xs = [], rs = [];
+  if (s.cap) {                                     // spherical cap points
+    const { xc, xt } = s.cap;
+    const thEnd = Math.acos(clamp((xt - xc) / BNOSE, -1, 1));
+    const nc = Math.max(6, Math.round(nPts * 0.35));
+    for (let i = 0; i <= nc; i++) {
+      const th = Math.PI - (Math.PI - thEnd) * (i / nc);
+      xs.push(xc + BNOSE * Math.cos(th)); rs.push(BNOSE * Math.sin(th));
+    }
+  } else { xs.push(s.xt); rs.push(BNOSE); }        // truncated flat face
+  const n2 = Math.max(6, nPts);
+  for (let i = 1; i <= n2; i++) {
+    const x = s.xt + (Lv - s.xt) * (i / n2);
+    xs.push(x); rs.push(s.f(x));
+  }
+  const x0 = xs[0];
+  return { xs: xs.map(x => x - x0), rs, virtualL: Lv, truncated: !!TRUNC };
+}
+
+/* =======================================================================
+   4.  AXIBOD / FINSET DECKS  ->  GEOMETRY
+   ======================================================================= */
+
+/** Body contour: array of stations {x, w, h, zc} (semi-width, semi-height, camber). */
+function buildMissileBody(cse, warn) {
+  const axi = NL(cse, "AXIBOD"), ell = NL(cse, "ELLBOD");
+  const nl = ell || axi;
+  if (!nl) return null;
+  const elliptical = !!ell;
+  const X0 = num(nl, "XO", num(nl, "X0", 0));
+  const NPTS = 26;
+
+  const xs = narr(nl, "X"), NX = num(nl, "NX", 0);
+  const stations = [];
+
+  // ---- Option 2: tabulated stations -------------------------------------
+  if (xs.length >= 2 && (NX >= 2 || narr(nl, "R").length || narr(nl, "W").length)) {
+    const R = narr(nl, "R"), W = narr(nl, "W"), H = narr(nl, "H"),
+          E = narr(nl, "ELLIP"), Z = narr(nl, "Z");
+    const n = Math.min(xs.length, Math.max(R.length, W.length, H.length) || xs.length);
+    for (let i = 0; i < n; i++) {
+      let w, h;
+      if (elliptical) {
+        const e = isNum(E[i]) ? E[i] : (isNum(E[0]) ? E[0] : 1);
+        if (isNum(W[i]) && isNum(H[i])) { w = W[i]; h = H[i]; }
+        else if (isNum(W[i])) { w = W[i]; h = W[i] * e; }
+        else if (isNum(H[i])) { h = H[i]; w = H[i] / (e || 1); }
+        else { w = h = R[i] || 0; }
+      } else { w = h = isNum(R[i]) ? R[i] : 0; }
+      stations.push({ x: xs[i], w, h, zc: isNum(Z[i]) ? Z[i] : 0 });
+    }
+    const bn = num(nl, "BNOSE", 0);
+    if (bn > 0) warn("BNOSE is set with tabulated (option 2) body coordinates — the tabulated points are drawn as given; nose blunting is not re-derived.");
+  } else {
+    // ---- Option 1: nose / centrebody / afterbody -------------------------
+    const LN = num(nl, "LNOSE", 0);
+    const wN = elliptical ? num(nl, "WNOSE", 1) / 2 : num(nl, "DNOSE", 1) / 2;
+    const eN = num(nl, "ENOSE", 1), eC = num(nl, "ECENTR", eN), eA = num(nl, "EAFT", eC);
+    const TN = str(nl, "TNOSE", "OGIVE"), pw = num(nl, "POWER", 0);
+    const BN = num(nl, "BNOSE", 0), TR = bool(nl, "TRUNC", false);
+    if (!(LN > 0)) { warn("No nose length (LNOSE) and no body coordinate table — body cannot be drawn."); return null; }
+
+    let nx = [], nr = [];
+    if (BN > 0) { const b = bluntNose(TN, LN, wN, pw, BN, TR, NPTS); nx = b.xs; nr = b.rs; }
+    else {
+      const f = noseProfile(TN, LN, wN, pw);
+      for (let i = 0; i <= NPTS; i++) { const x = LN * i / NPTS; nx.push(x); nr.push(f(x)); }
+    }
+    nx.forEach((x, i) => stations.push({ x, w: nr[i], h: nr[i] * eN, zc: 0 }));
+
+    const LC = num(nl, "LCENTR", 0);
+    const wC = elliptical ? num(nl, "WCENTR", wN * 2) / 2 : num(nl, "DCENTR", wN * 2) / 2;
+    if (LC > 0) {
+      const x0 = stations[stations.length - 1].x;
+      const steps = Math.abs(wC - wN) > 1e-9 ? 12 : 1;
+      for (let i = 1; i <= steps; i++) {
+        const f = i / steps, w = wN + (wC - wN) * f;
+        stations.push({ x: x0 + LC * f, w, h: w * (eN + (eC - eN) * f), zc: 0 });
+      }
+    }
+    const LA = num(nl, "LAFT", 0);
+    const wA = elliptical ? num(nl, "WAFT", NaN) / 2 : num(nl, "DAFT", NaN) / 2;
+    if (LA > 0 && isNum(wA)) {
+      const x0 = stations[stations.length - 1].x, r0 = stations[stations.length - 1].w;
+      const f = aftProfile(str(nl, "TAFT", "CONICAL"), LA, r0, wA);
+      for (let i = 1; i <= 14; i++) {
+        const dx = LA * i / 14, w = f(dx);
+        stations.push({ x: x0 + dx, w, h: w * (eC + (eA - eC) * (i / 14)), zc: 0 });
+      }
+    } else if (LA > 0) warn("LAFT given without DAFT/WAFT — afterbody skipped.");
+  }
+  stations.forEach(s => { s.x += X0; });
+  const dexit = num(nl, "DEXIT", NaN);
+  return { stations, elliptical, dexit, x0: X0, source: elliptical ? "ELLBOD" : "AXIBOD" };
+}
+
+/** Semi-width / semi-height of the body at an axial station. */
+function bodyAt(body, x) {
+  if (!body || !body.stations.length) return { w: 0, h: 0, zc: 0 };
+  const S = body.stations;
+  if (x <= S[0].x) return S[0];
+  if (x >= S[S.length - 1].x) return S[S.length - 1];
+  let i = 1; while (i < S.length - 1 && S[i].x < x) i++;
+  const f = (x - S[i - 1].x) / (S[i].x - S[i - 1].x || 1);
+  return { w: S[i - 1].w + f * (S[i].w - S[i - 1].w),
+           h: S[i - 1].h + f * (S[i].h - S[i - 1].h),
+           zc: S[i - 1].zc + f * (S[i].zc - S[i - 1].zc) };
+}
+
+/** Build the planform + section definition of one fin set. */
+function buildFinSet(cse, n, body, warn) {
+  const nl = NL(cse, "FINSET" + n);
+  if (!nl) return null;
+  const X0 = num(NL(cse, "AXIBOD") || NL(cse, "ELLBOD"), "XO",
+              num(NL(cse, "AXIBOD") || NL(cse, "ELLBOD"), "X0", 0));
+
+  let sspan = narr(nl, "SSPAN");
+  const chord = narr(nl, "CHORD");
+  if (sspan.length < 2 || chord.length < 2) { warn(`FINSET${n}: needs at least two SSPAN and CHORD values — skipped.`); return null; }
+  const k = Math.min(sspan.length, chord.length);
+  sspan = sspan.slice(0, k);
+  const ch = chord.slice(0, k);
+
+  // ---- XLE from explicit values or from SWEEP/STA ------------------------
+  const xleIn = arr(nl, "XLE"), sweep = narr(nl, "SWEEP"), sta = narr(nl, "STA");
+  const xle = [];
+  xle[0] = isNum(xleIn[0]) ? xleIn[0] : 0;
+  for (let i = 1; i < k; i++) {
+    if (isNum(xleIn[i])) { xle[i] = xleIn[i]; continue; }
+    const sw = isNum(sweep[i - 1]) ? sweep[i - 1] : (isNum(sweep[0]) ? sweep[0] : 0);
+    const st = isNum(sta[i - 1]) ? sta[i - 1] : (isNum(sta[0]) ? sta[0] : 1);
+    const ds = sspan[i] - sspan[i - 1];
+    const xRef = xle[i - 1] + st * ch[i - 1] + ds * Math.tan(sw * D2R);
+    xle[i] = xRef - st * ch[i];
+  }
+
+  // ---- SSPAN(1)=0 : place the root on the body mould line ----------------
+  let rootOnBody = false;
+  if (Math.abs(sspan[0]) < 1e-12 && body) {
+    const xMid = X0 + xle[0] + ch[0] / 2;
+    const r = bodyAt(body, xMid).w;
+    for (let i = 0; i < k; i++) sspan[i] += r;
+    rootOnBody = true;
+  }
+
+  // ---- section definition per span station -------------------------------
+  const secTyp = String(str(nl, "SECTYP", "HEX")).toUpperCase();
+  const zu = narr(nl, "ZUPPER"), zl = narr(nl, "ZLOWER"),
+        lmu = narr(nl, "LMAXU"), lml = narr(nl, "LMAXL"),
+        lfu = narr(nl, "LFLATU"), lfl = narr(nl, "LFLATL");
+  const pick = (a, i, d) => (isNum(a[i]) ? a[i] : (isNum(a[0]) ? a[0] : d));
+  const naca = (cse.airfoils || []).find(a => a.key === String(n));
+  const sections = [];
+  for (let i = 0; i < k; i++) {
+    if (secTyp === "NACA" || secTyp === "1") {
+      sections.push(makeSection(naca ? { type: "NACA", series: naca.series, desig: naca.desig }
+                                     : { type: "TC", tc: 0.05 }));
+      if (!naca && i === 0) warn(`FINSET${n}: SECTYP=NACA but no matching "NACA-${n}-..." control card — a 5% symmetric section is drawn instead.`);
+    } else if (secTyp === "USER" || secTyp === "3") {
+      const xc = narr(nl, "XCORD");
+      if (xc.length >= 2) sections.push(makeSection({ type: "USER", xc,
+        yu: narr(nl, "YUPPER").length ? narr(nl, "YUPPER") : null,
+        yl: narr(nl, "YLOWER").length ? narr(nl, "YLOWER") : null,
+        mean: narr(nl, "MEAN"), thick: narr(nl, "THICK") }));
+      else { sections.push(makeSection({ type: "TC", tc: 0.05 })); if (i === 0) warn(`FINSET${n}: SECTYP=USER but XCORD is missing — a 5% symmetric section is drawn instead.`); }
+    } else if (secTyp === "ARC" || secTyp === "2") {
+      const u = pick(zu, i, 0.025); sections.push(makeSection({ type: "ARC", zu: u, zl: pick(zl, i, u) }));
+    } else {
+      const u = pick(zu, i, 0.025), lu = pick(lmu, i, 0.5), fu = pick(lfu, i, 0);
+      sections.push(makeSection({ type: "HEX", zu: u, zl: pick(zl, i, u),
+        lmu: lu, lml: pick(lml, i, lu), lfu: fu, lfl: pick(lfl, i, fu) }));
+    }
+  }
+
+  // ---- panel placement ---------------------------------------------------
+  const np = Math.max(1, Math.round(num(nl, "NPANEL", 4)));
+  const phiIn = narr(nl, "PHIF"), gamIn = narr(nl, "GAM");
+  const phis = [], gams = [];
+  for (let p = 0; p < np; p++) {
+    phis.push(isNum(phiIn[p]) ? phiIn[p] : (360 / np) * p);
+    gams.push(isNum(gamIn[p]) ? gamIn[p] : 0);
+  }
+  if (!phiIn.length && np > 1) warn(`FINSET${n}: PHIF not given — panels are spaced evenly with panel 1 at PHIF=0 (code default).`);
+
+  // ---- deflection --------------------------------------------------------
+  const dfl = NL(cse, "DEFLCT");
+  const delta = dfl ? narr(dfl, "DELTA" + n) : [];
+  const xhArr = dfl ? narr(dfl, "XHINGE") : [];
+  const skArr = dfl ? narr(dfl, "SKEW") : [];
+  const xhinge = isNum(xhArr[n - 1]) ? xhArr[n - 1] : (X0 + xle[0] + ch[0] / 2);
+  const skew = isNum(skArr[n - 1]) ? skArr[n - 1] : 0;
+
+  const cfoc = narr(nl, "CFOC");
+  return { n, sspan, chord: ch, xle: xle.map(v => v + X0), sections, phis, gams, delta,
+           xhinge, skew, secTyp, rootOnBody, cfoc,
+           nvor: num(nl, "NVOR", 1) };
+}
+
+/* =======================================================================
+   5.  BODY / SYNTHS DECKS  ->  GEOMETRY
+   ======================================================================= */
+
+function buildDigitalBody(cse, warn) {
+  const nl = NL(cse, "BODY");
+  if (!nl) return null;
+  const X = narr(nl, "X");
+  if (X.length < 2) { warn("$BODY has no usable X station table — fuselage not drawn."); return null; }
+  const R = narr(nl, "R"), ZU = narr(nl, "ZU"), ZL = narr(nl, "ZL"),
+        S = narr(nl, "S"), P = narr(nl, "P");
+  const stations = [];
+  let usedFallback = "";
+  for (let i = 0; i < X.length; i++) {
+    let w = R[i];
+    if (!isNum(w)) {
+      if (isNum(S[i])) { w = Math.sqrt(S[i] / Math.PI); usedFallback = "cross-sectional area S"; }
+      else if (isNum(P[i])) { w = P[i] / (2 * Math.PI); usedFallback = "periphery P"; }
+      else w = 0;
+    }
+    // ZU/ZL are z-ordinates; the reference states ZL positive below the
+    // centreline, but decks conventionally write it signed.  Use magnitudes.
+    const zu = isNum(ZU[i]) ? Math.abs(ZU[i]) : w;
+    const zl = isNum(ZL[i]) ? -Math.abs(ZL[i]) : -w;
+    stations.push({ x: X[i], w, zu, zl });
+  }
+  if (usedFallback) warn(`$BODY: half-width R missing at some stations — an equivalent circular radius was derived from ${usedFallback}.`);
+  if (!ZU.length && !ZL.length) warn("$BODY: no ZU/ZL ordinates — a circular cross-section of radius R is assumed.");
+  return { stations, x0: X[0] };
+}
+
+/**
+ * Section ordinates for a lifting surface in a BODY/SYNTHS deck.
+ *   schrKey = planform prefix, e.g. "WG" -> namelist WGSCHR
+ *   afKey   = airfoil-card surface letter, e.g. "W" -> card NACA-W-...
+ */
+function digitalSection(cse, schrKey, afKey, warn) {
+  const key = afKey;
+  const schr = NL(cse, schrKey + "SCHR");
+  const tovc = num(schr, "TOVC", NaN);
+  const xc = narr(schr, "XCORD");
+  if (xc.length >= 2) {
+    const typein = num(schr, "TYPEIN", 1);
+    if (typein === 2) return makeSection({ type: "USER", xc, mean: narr(schr, "MEAN"), thick: narr(schr, "THICK") });
+    return makeSection({ type: "USER", xc, yu: narr(schr, "YUPPER"), yl: narr(schr, "YLOWER") });
+  }
+  const af = (cse.airfoils || []).find(a => a.key === key);
+  if (af) return makeSection({ type: "NACA", series: af.series, desig: af.desig });
+  if (isNum(tovc)) return makeSection({ type: "TC", tc: tovc });
+  warn(`No NACA-${key}-… card and no $${schrKey}SCHR section data — a 6% symmetric section is drawn for the ${key} surface.`);
+  return makeSection({ type: "TC", tc: 0.06 });
+}
+
+/**
+ * Planform of a lifting surface in a BODY/SYNTHS deck, as breakpoints
+ * [{y, xle, chord, z}] measured from the theoretical root.
+ */
+function buildDigitalPlanform(cse, key, warn) {
+  const nl = NL(cse, key + "PLNF");
+  if (!nl) return null;
+  const CR = num(nl, "CHRDR", NaN), CT = num(nl, "CHRDTP", NaN), CB = num(nl, "CHRDBP", NaN);
+  const SSPN = num(nl, "SSPN", NaN), SSPNOP = num(nl, "SSPNOP", 0), SSPNE = num(nl, "SSPNE", NaN);
+  const SAVSI = num(nl, "SAVSI", 0), SAVSO = num(nl, "SAVSO", SAVSI);
+  const CHSTAT = num(nl, "CHSTAT", 0.25);
+  const DHI = num(nl, "DHDADI", 0), DHO = num(nl, "DHDADO", DHI);
+  const SSPNDD = num(nl, "SSPNDD", SSPNOP);
+  const TYPE = num(nl, "TYPE", 1), TWISTA = num(nl, "TWISTA", 0);
+  if (!isNum(CR) || !isNum(SSPN)) { warn(`$${key}PLNF: CHRDR and SSPN are required — surface skipped.`); return null; }
+
+  const cranked = (TYPE >= 2) && SSPNOP > 0 && isNum(CB);
+  if (TYPE < 2 && SSPNOP > 0 && isNum(CB))
+    warn(`$${key}PLNF declares TYPE=${fmt(TYPE, 0)} (straight tapered) but also gives CHRDBP/SSPNOP — as in DATCOM itself the breakpoint is ignored and a straight-tapered panel is drawn. Set TYPE=2 or 3 if a cranked planform was intended.`);
+  const yb = cranked ? SSPN - SSPNOP : SSPN;
+  const bps = [];
+  // root
+  bps.push({ y: 0, chord: CR, xle: 0 });
+  // breakpoint
+  const xRefRoot = CHSTAT * CR;
+  if (cranked) {
+    const xRefB = xRefRoot + yb * Math.tan(SAVSI * D2R);
+    bps.push({ y: yb, chord: CB, xle: xRefB - CHSTAT * CB });
+    const xRefT = xRefB + SSPNOP * Math.tan(SAVSO * D2R);
+    bps.push({ y: SSPN, chord: isNum(CT) ? CT : CB, xle: xRefT - CHSTAT * (isNum(CT) ? CT : CB) });
+  } else {
+    const xRefT = xRefRoot + SSPN * Math.tan(SAVSI * D2R);
+    const ct = isNum(CT) ? CT : CR;
+    bps.push({ y: SSPN, chord: ct, xle: xRefT - CHSTAT * ct });
+  }
+  // dihedral (piecewise; break at SSPN-SSPNDD when SSPNDD is given)
+  const yd = isNum(SSPNDD) && SSPNDD > 0 ? SSPN - SSPNDD : yb;
+  bps.forEach(b => {
+    b.z = b.y <= yd ? b.y * Math.tan(DHI * D2R)
+                    : yd * Math.tan(DHI * D2R) + (b.y - yd) * Math.tan(DHO * D2R);
+    b.twist = TWISTA * (SSPN > 0 ? b.y / SSPN : 0);
+  });
+  return { bps, CHSTAT, SSPN, SSPNE: isNum(SSPNE) ? SSPNE : SSPN, cranked,
+           SAVSI, SAVSO, DHI, DHO, CR, CT: isNum(CT) ? CT : CR, CB, TYPE };
+}
+
+/* =======================================================================
+   6.  MESH HELPERS
+   All geometry is built in DATCOM axes (X aft, Y starboard, Z up) and the
+   whole model group is re-oriented for three.js at the end.
+   ======================================================================= */
+
+const V3 = (x, y, z) => new THREE.Vector3(x, y, z);
+
+/** Loft a surface through rings of equal point count. */
+function loft(rings, { capStart = false, capEnd = false, closed = true } = {}) {
+  const nR = rings.length, nP = rings[0].length;
+  const pos = [], idx = [];
+  rings.forEach(r => r.forEach(p => pos.push(p.x, p.y, p.z)));
+  const lim = closed ? nP : nP - 1;
+  for (let i = 0; i < nR - 1; i++) for (let j = 0; j < lim; j++) {
+    const a = i * nP + j, b = i * nP + (j + 1) % nP, c = (i + 1) * nP + j, d = (i + 1) * nP + (j + 1) % nP;
+    idx.push(a, c, b, b, c, d);
+  }
+  /** A ring that has collapsed to a point (e.g. a zero tip chord) needs no cap. */
+  const degenerate = ring => {
+    let mx = 0;
+    for (let j = 1; j < ring.length; j++) mx = Math.max(mx, ring[0].distanceToSquared(ring[j]));
+    return mx < 1e-18;
+  };
+  const capIt = (ring, ringIndex, flip) => {
+    if (degenerate(ring)) return;
+    const base = pos.length / 3;
+    let cx = 0, cy = 0, cz = 0;
+    ring.forEach(p => { cx += p.x; cy += p.y; cz += p.z; });
+    pos.push(cx / nP, cy / nP, cz / nP);
+    for (let j = 0; j < nP; j++) {
+      const a = ringIndex * nP + j, b = ringIndex * nP + (j + 1) % nP;
+      if (flip) idx.push(base, b, a); else idx.push(base, a, b);
+    }
+  };
+  if (capStart) capIt(rings[0], 0, false);
+  if (capEnd) capIt(rings[nR - 1], nR - 1, true);
+  const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  // degenerate triangles (zero tip chords, closed LE/TE points) leave NaN normals
+  const nrm = g.getAttribute("normal");
+  for (let i = 0; i < nrm.count; i++) {
+    if (!isFinite(nrm.getX(i)) || !isFinite(nrm.getY(i)) || !isFinite(nrm.getZ(i)))
+      nrm.setXYZ(i, 0, 0, 1);
+  }
+  nrm.needsUpdate = true;
+  return g;
+}
+
+/** Elliptical body mesh from contour stations. */
+function bodyMesh(stations, nSeg = 48, digital = false) {
+  const rings = stations.map(s => {
+    const ring = [];
+    for (let j = 0; j < nSeg; j++) {
+      const t = (j / nSeg) * 2 * Math.PI;
+      const cy = Math.sin(t), cz = Math.cos(t);
+      const halfZ = digital ? (cz >= 0 ? s.zu : -s.zl) : s.h;
+      ring.push(V3(s.x, s.w * cy, (s.zc || 0) + halfZ * cz));
+    }
+    return ring;
+  });
+  return loft(rings, { capStart: true, capEnd: true, closed: true });
+}
+
+const SECN = 34;                                  // chordwise points per surface
+const SECX = Array.from({ length: SECN }, (_, i) => 0.5 * (1 - Math.cos(Math.PI * i / (SECN - 1))));
+
+/** Closed section outline (upper LE->TE, then lower TE->LE) at unit chord. */
+function sectionOutline(sec) {
+  const pts = [];
+  for (let i = 0; i < SECN; i++) pts.push({ x: SECX[i], t: sec.up(SECX[i]) });
+  for (let i = SECN - 2; i >= 1; i--) pts.push({ x: SECX[i], t: sec.lo(SECX[i]) });
+  return pts;
+}
+
+/**
+ * Loft a lifting surface from stations
+ *   [{ xle, chord, sec, org:Vector3, spanDir:Vector3, thickDir:Vector3, twist }]
+ * xle is measured along +X; org is the point on the span axis for that station.
+ */
+function surfaceMesh(stations) {
+  const rings = stations.map(st => {
+    const out = sectionOutline(st.sec);
+    const tw = (st.twist || 0) * D2R;
+    const pivot = st.pivot === undefined ? 0.25 : st.pivot;
+    return out.map(p => {
+      let dx = (p.x - pivot) * st.chord, dt = p.t * st.chord;
+      if (tw) {                                   // twist about the pivot chord station
+        const c = Math.cos(tw), s = Math.sin(tw);
+        const nx = dx * c + dt * s, nt = -dx * s + dt * c;
+        dx = nx; dt = nt;
+      }
+      const v = st.org.clone().add(st.thickDir.clone().multiplyScalar(dt));
+      v.x = st.xle + pivot * st.chord + dx;       // chordwise position is absolute in X
+      return v;
+    });
+  });
+  return loft(rings, { capStart: true, capEnd: true, closed: true });
+}
+
+/* =======================================================================
+   7.  SCENE
+   ======================================================================= */
+
+const canvas = document.getElementById("cv");
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x14171c);
+const camera = new THREE.PerspectiveCamera(42, 1, 0.01, 1e5);
+camera.position.set(-0.75, 0.45, 0.95);   // non-degenerate default viewing direction
+const controls = new THREE.OrbitControls(camera, canvas);
+controls.enableDamping = true; controls.dampingFactor = 0.09;
+
+scene.add(new THREE.HemisphereLight(0xbcd2ff, 0x2a2f38, 0.85));
+const key = new THREE.DirectionalLight(0xffffff, 0.85); key.position.set(1, 2, 1.6); scene.add(key);
+const fill = new THREE.DirectionalLight(0xa8c4ff, 0.35); fill.position.set(-1.5, -0.6, -1); scene.add(fill);
+
+/** Model group: maps DATCOM axes (X aft, Y stbd, Z up) into three.js (Y up). */
+const model = new THREE.Group();
+model.matrixAutoUpdate = false;
+model.matrix.set(1, 0, 0, 0,
+                 0, 0, 1, 0,
+                 0, -1, 0, 0,
+                 0, 0, 0, 1);
+scene.add(model);
+
+const helpers = new THREE.Group(); scene.add(helpers);
+let gridHelper = null;
+
+const MATS = {
+  body:  new THREE.MeshStandardMaterial({ color: 0x8d97a5, metalness: 0.15, roughness: 0.62, side: THREE.DoubleSide }),
+  fin:   new THREE.MeshStandardMaterial({ color: 0x4da3ff, metalness: 0.1, roughness: 0.5, side: THREE.DoubleSide }),
+  wing:  new THREE.MeshStandardMaterial({ color: 0x4da3ff, metalness: 0.1, roughness: 0.5, side: THREE.DoubleSide }),
+  htail: new THREE.MeshStandardMaterial({ color: 0x59d09a, metalness: 0.1, roughness: 0.5, side: THREE.DoubleSide }),
+  vtail: new THREE.MeshStandardMaterial({ color: 0xe0a33c, metalness: 0.1, roughness: 0.5, side: THREE.DoubleSide }),
+  vfin:  new THREE.MeshStandardMaterial({ color: 0xc98bdc, metalness: 0.1, roughness: 0.5, side: THREE.DoubleSide }),
+  flap:  new THREE.MeshStandardMaterial({ color: 0xe06c5c, metalness: 0.1, roughness: 0.5, side: THREE.DoubleSide }),
+  prot:  new THREE.MeshStandardMaterial({ color: 0xd0d5dc, metalness: 0.2, roughness: 0.55, side: THREE.DoubleSide }),
+  prop:  new THREE.MeshStandardMaterial({ color: 0xb9c2cf, metalness: 0.35, roughness: 0.4, side: THREE.DoubleSide }),
+  jet:   new THREE.MeshStandardMaterial({ color: 0x9aa6b6, metalness: 0.35, roughness: 0.4, side: THREE.DoubleSide }),
+  // faceted ducts and boxes read better flat-shaded than smoothed
+  inlet: new THREE.MeshStandardMaterial({ color: 0x7fb2c9, metalness: 0.2, roughness: 0.5, side: THREE.DoubleSide, flatShading: true }),
+};
+const COLORS = { body: "#8d97a5", fin: "#4da3ff", wing: "#4da3ff", htail: "#59d09a",
+                 vtail: "#e0a33c", vfin: "#c98bdc", flap: "#e06c5c", prot: "#d0d5dc",
+                 inlet: "#7fb2c9", prop: "#b9c2cf", jet: "#9aa6b6" };
+
+let PARTS = [];          // [{name, group, kind, stats}]
+let HINGES = [];         // [[Vector3, Vector3]] in DATCOM axes
+let MODEL_BOX = new THREE.Box3();
+let DISPLAY = "solid";
+
+function clearModel() {
+  while (model.children.length) {
+    const c = model.children.pop();
+    c.traverse(o => { if (o.geometry) o.geometry.dispose(); });
+  }
+  PARTS = []; HINGES = [];
+}
+
+function addPart(name, kind, meshes, stats) {
+  const g = new THREE.Group();
+  meshes.forEach(m => g.add(m));
+  model.add(g);
+  PARTS.push({ name, kind, group: g, stats: stats || null, visible: true });
+  return g;
+}
+
+function meshFor(geo, kind) {
+  const m = new THREE.Mesh(geo, MATS[kind] || MATS.body);
+  const eg = new THREE.LineSegments(
+    new THREE.EdgesGeometry(geo, 25),
+    new THREE.LineBasicMaterial({ color: 0x0f1319, transparent: true, opacity: 0.5 }));
+  eg.userData.isEdge = true;
+  m.add(eg);
+  return m;
+}
+
+function applyDisplay() {
+  model.traverse(o => {
+    if (o.userData.isEdge) { o.visible = (DISPLAY === "edges" || DISPLAY === "wire"); return; }
+    if (!o.isMesh) return;
+    const mat = o.material;
+    mat.wireframe = (DISPLAY === "wire");
+    mat.transparent = (DISPLAY === "xray");
+    mat.opacity = (DISPLAY === "xray") ? 0.28 : 1;
+    mat.depthWrite = (DISPLAY !== "xray");
+    mat.needsUpdate = true;
+  });
+}
+
+/* =======================================================================
+   8.  BUILD: AXIBOD / FINSET MODEL
+   ======================================================================= */
+
+/** Unit vectors for a panel at roll angle phi (deg) — Figure 9 convention. */
+const radialDir = phi => V3(0, Math.sin(phi * D2R), Math.cos(phi * D2R));
+const tangDir   = phi => V3(0, Math.cos(phi * D2R), -Math.sin(phi * D2R));
+
+function buildMissileModel(cse, warn, opts) {
+  const body = buildMissileBody(cse, warn);
+  if (body) {
+    const geo = bodyMesh(body.stations, 56, false);
+    const S = body.stations;
+    addPart(`Body (${body.source})`, "body", [meshFor(geo, "body")], {
+      "Length": S[S.length - 1].x - S[0].x,
+      "Max diameter": 2 * Math.max(...S.map(s => Math.max(s.w, s.h))),
+      "Base diameter": 2 * S[S.length - 1].w,
+      "Fineness ratio": (S[S.length - 1].x - S[0].x) / (2 * Math.max(...S.map(s => s.w)) || 1),
+      "DEXIT": isNum(body.dexit) ? body.dexit : "not set",
+      "Stations": S.length,
+    });
+  } else warn("No $AXIBOD or $ELLBOD in this case — no body drawn.");
+
+  for (let n = 1; n <= 9; n++) {
+    const fs = buildFinSet(cse, n, body, warn);
+    if (!fs) continue;
+    const k = fs.sspan.length;
+    const meshes = [];
+    const dScale = opts.defScale;
+
+    fs.phis.forEach((phi, p) => {
+      const gam = fs.gams[p] || 0;
+      const sDir = radialDir(phi + gam), tDir = tangDir(phi + gam);
+      const anchor = radialDir(phi).multiplyScalar(fs.sspan[0]);
+      const stations = [];
+      for (let i = 0; i < k; i++) {
+        const org = anchor.clone().add(sDir.clone().multiplyScalar(fs.sspan[i] - fs.sspan[0]));
+        stations.push({ xle: fs.xle[i], chord: fs.chord[i], sec: fs.sections[i],
+                        org, thickDir: tDir, spanDir: sDir, pivot: 0 });
+      }
+      const geo = surfaceMesh(stations);
+      const del = (isNum(fs.delta[p]) ? fs.delta[p] : 0) * dScale;
+      let m;
+      if (Math.abs(del) > 1e-9) {
+        // hinge axis = span direction swept back by SKEW, through (XHINGE, root).
+        // Positive DELTA is a right-hand rotation about the outboard span axis,
+        // which puts the LE of a top-mounted panel toward -Y (Figure 13).
+        const axis = sDir.clone().multiplyScalar(Math.cos(fs.skew * D2R))
+          .add(V3(1, 0, 0).multiplyScalar(Math.sin(fs.skew * D2R))).normalize();
+        const pivot = anchor.clone();
+        pivot.x = fs.xhinge;
+        geo.translate(-pivot.x, -pivot.y, -pivot.z);   // before edges are extracted
+        m = meshFor(geo, "fin");
+        m.position.copy(pivot);
+        m.quaternion.setFromAxisAngle(axis, del * D2R);
+      } else {
+        m = meshFor(geo, "fin");
+      }
+      meshes.push(m);
+
+      // hinge line, from the root to the tip along the (possibly skewed) axis
+      const axis = sDir.clone().multiplyScalar(Math.cos(fs.skew * D2R))
+        .add(V3(1, 0, 0).multiplyScalar(Math.sin(fs.skew * D2R))).normalize();
+      const root = anchor.clone(); root.x = fs.xhinge;
+      HINGES.push([root, root.clone().add(axis.clone().multiplyScalar(fs.sspan[k - 1] - fs.sspan[0]))]);
+    });
+
+    // planform statistics (exposed panel, one side)
+    let area = 0, macNum = 0, macDen = 0, xleMac = 0;
+    for (let i = 0; i < k - 1; i++) {
+      const ds = fs.sspan[i + 1] - fs.sspan[i], c0 = fs.chord[i], c1 = fs.chord[i + 1];
+      const a = 0.5 * (c0 + c1) * ds; area += a;
+      macNum += ds * (c0 * c0 + c0 * c1 + c1 * c1) / 3;
+      macDen += a;
+      xleMac += ds * (fs.xle[i] * (2 * c0 + c1) + fs.xle[i + 1] * (c0 + 2 * c1)) / 6;
+    }
+    const mac = macDen > 0 ? macNum / macDen : 0;
+    const semi = fs.sspan[k - 1] - fs.sspan[0];
+    const leSweep = semi > 0 ? Math.atan2(fs.xle[k - 1] - fs.xle[0], semi) * R2D : 0;
+    const teSweep = semi > 0 ? Math.atan2((fs.xle[k - 1] + fs.chord[k - 1]) - (fs.xle[0] + fs.chord[0]), semi) * R2D : 0;
+
+    addPart(`Fin set ${n} (${fs.phis.length} panels, ${fs.secTyp})`, "fin", meshes, {
+      "Panels / PHIF": fs.phis.map(v => fmt(v, 1)).join(", ") + "°",
+      "GAM (dihedral)": fs.gams.some(g => g) ? fs.gams.map(v => fmt(v, 1)).join(", ") + "°" : "0°",
+      "Root chord": fs.chord[0],
+      "Tip chord": fs.chord[k - 1],
+      "Taper ratio": fs.chord[0] > 0 ? fs.chord[k - 1] / fs.chord[0] : NaN,
+      "Exposed semispan": semi,
+      "Total span": 2 * fs.sspan[k - 1],
+      "Exposed area (1 panel)": area,
+      "Panel aspect ratio": area > 0 ? (semi * semi) / area : NaN,
+      "LE sweep": leSweep,
+      "TE sweep": teSweep,
+      "MAC": mac,
+      "XLE root": fs.xle[0],
+      "Hinge XHINGE": fs.xhinge,
+      "Deflection δ": fs.delta.length ? fs.delta.map(v => fmt(v || 0, 1)).join(", ") + "°" : "0°",
+      "Root placed on body": fs.rootOnBody ? "yes (SSPAN(1)=0)" : "no",
+    }, );
+    PARTS[PARTS.length - 1].angleKeys = ["LE sweep", "TE sweep"];
+  }
+
+  buildProtuberances(cse, body, warn);
+  buildInlets(cse, body, warn);
+  return body;
+}
+
+function buildProtuberances(cse, body, warn) {
+  const nl = NL(cse, "PROTUB");
+  if (!nl) return;
+  const nSets = Math.max(0, Math.round(num(nl, "NPROT", 0)));
+  if (!nSets) return;
+  const ptype = arr(nl, "PTYPE"), xprot = narr(nl, "XPROT"), nloc = narr(nl, "NLOC"),
+        phipro = narr(nl, "PHIPRO"), L = narr(nl, "LPROT"), W = narr(nl, "WPROT"),
+        H = narr(nl, "HPROT"), O = narr(nl, "OPROT");
+  const meshes = []; let phiCursor = 0, memberCursor = 0;
+  const TYPEMEM = { LUG: 4, SHOE: 3, "3": 4, "4": 3 };
+  for (let s = 0; s < nSets; s++) {
+    const t = String(ptype[s] === undefined ? "BLOCK" : ptype[s]).toUpperCase();
+    const nMem = TYPEMEM[t] || 1;
+    const cnt = Math.max(1, Math.round(isNum(nloc[s]) ? nloc[s] : 1));
+    const xc = isNum(xprot[s]) ? xprot[s] : 0;
+    for (let c = 0; c < cnt; c++) {
+      const phi = isNum(phipro[phiCursor]) ? phipro[phiCursor] : (360 / cnt) * c;
+      phiCursor++;
+      for (let m = 0; m < nMem; m++) {
+        const mi = memberCursor + m;
+        const lp = isNum(L[mi]) ? L[mi] : 1, wp = isNum(W[mi]) ? W[mi] : 0.5,
+              hp = isNum(H[mi]) ? H[mi] : 0.5, op = isNum(O[mi]) ? O[mi] : 0;
+        const rBody = body ? bodyAt(body, xc).w : 0;
+        // Built in a local frame: +x = flow (aft), +y = tangential, +z = radially out.
+        let geo;
+        if (t === "VCYL" || ptype[s] === 1) {              // cylinder normal to the flow
+          geo = new THREE.CylinderGeometry(wp / 2, wp / 2, hp, 20); geo.rotateX(Math.PI / 2);
+        } else if (t === "HCYL" || ptype[s] === 2) {       // cylinder aligned with the flow
+          geo = new THREE.CylinderGeometry(hp / 2, hp / 2, lp, 20); geo.rotateZ(Math.PI / 2);
+        } else if (t === "FAIRING" || ptype[s] === 6) {    // streamlined half body
+          geo = new THREE.SphereGeometry(0.5, 20, 10, 0, 2 * Math.PI, 0, Math.PI / 2);
+          geo.rotateX(Math.PI / 2); geo.scale(lp, wp, 2 * hp);
+        } else {                                           // BLOCK / LUG / SHOE members
+          geo = new THREE.BoxGeometry(lp, wp, hp);
+        }
+        geo.translate(0, 0, hp / 2);                       // sit on the local z = 0 plane
+        const rd = radialDir(phi), td = tangDir(phi);
+        const mesh = meshFor(geo, "prot");
+        mesh.matrixAutoUpdate = false;
+        mesh.matrix.makeBasis(V3(1, 0, 0), td, rd);
+        mesh.matrix.setPosition(rd.clone().multiplyScalar(rBody + op).setX(xc));
+        meshes.push(mesh);
+      }
+    }
+    memberCursor += nMem;
+  }
+  if (meshes.length) addPart(`Protuberances (${nSets} set${nSets > 1 ? "s" : ""})`, "prot", meshes,
+    { "Sets": nSets, "Types": arr(nl, "PTYPE").join(", ") || "—" });
+  warn("Protuberances are drawn as simplified primitives (box / cylinder / fairing) at the stated station, roll angle and offset; LUG and SHOE members are stacked from their LPROT/WPROT/HPROT arrays.");
+}
+
+function buildInlets(cse, body, warn) {
+  const nl = NL(cse, "INLET");
+  if (!nl) return;
+  const nin = Math.max(0, Math.round(num(nl, "NIN", 0)));
+  if (!nin) return;
+  const type = String(str(nl, "INTYPE", "2DSIDE")).toUpperCase();
+  const XINLT = num(nl, "XINLT", 0), HDIV = num(nl, "HDIV", 0),
+        XDIV = num(nl, "XDIV", 0), LDIV = num(nl, "LDIV", 0);
+  const phis = narr(nl, "PHI"), X = narr(nl, "X"), H = narr(nl, "H"), W = narr(nl, "W");
+  if (X.length < 2) { warn("$INLET: needs the X/H/W station arrays — inlets skipped."); return; }
+  const meshes = [];
+  for (let i = 0; i < nin; i++) {
+    const phi = isNum(phis[i]) ? phis[i] : (360 / nin) * i;
+    const rd = radialDir(phi), td = tangDir(phi);
+    const rings = X.map((xi, j) => {
+      const h = isNum(H[j]) ? H[j] : (isNum(W[j]) ? W[j] : 0), w = isNum(W[j]) ? W[j] : h;
+      const rBody = body ? bodyAt(body, XINLT + xi).w : 0;
+      const stand = rBody + HDIV;
+      const ring = [];
+      const N = (type === "AXI" || type === "2") ? 20 : 4;
+      for (let k = 0; k < N; k++) {
+        let dy, dz;
+        if (N === 4) { const sy = (k === 1 || k === 2) ? 1 : -1, sz = (k >= 2) ? 1 : -1; dy = sy * w / 2; dz = sz * h / 2; }
+        else { const a = 2 * Math.PI * k / N; dy = Math.cos(a) * w / 2; dz = Math.sin(a) * w / 2; }
+        ring.push(rd.clone().multiplyScalar(stand + h / 2 + dz)
+          .add(td.clone().multiplyScalar(dy)).setX(XINLT + xi));
+      }
+      return ring;
+    });
+    meshes.push(meshFor(loft(rings, { capStart: true, capEnd: true }), "inlet"));
+    if (HDIV > 1e-9 && LDIV > 0) {                                 // boundary-layer diverter
+      const x0 = XINLT + XDIV, rB = body ? bodyAt(body, x0).w : 0;
+      const g = new THREE.BoxGeometry(LDIV, Math.max(0.02, (W[0] || 0.2) * 0.15), HDIV);
+      g.translate(LDIV / 2, 0, HDIV / 2);
+      const mesh = meshFor(g, "inlet");
+      mesh.matrixAutoUpdate = false;
+      mesh.matrix.makeBasis(V3(1, 0, 0), td, rd);
+      mesh.matrix.setPosition(rd.clone().multiplyScalar(rB).setX(x0));
+      meshes.push(mesh);
+    }
+  }
+  addPart(`Inlets (${nin} × ${type})`, "inlet", meshes,
+    { "Type": type, "XINLT": XINLT, "HDIV": HDIV, "LDIV": LDIV,
+      "Covered": bool(nl, "COVER", false) ? "yes" : "no", "Ramp angle": num(nl, "RAMP", NaN) });
+  warn("Inlets are drawn as a lofted duct through the five X/H/W stations, standing off the body by HDIV; cowl-lip and ramp internal detail is not modelled.");
+}
+
+/* =======================================================================
+   9.  BUILD: BODY / SYNTHS MODEL
+   ======================================================================= */
+
+function buildDigitalModel(cse, warn, opts) {
+  const body = buildDigitalBody(cse, warn);
+  if (body) {
+    const geo = bodyMesh(body.stations, 56, true);
+    const S = body.stations;
+    addPart("Fuselage ($BODY)", "body", [meshFor(geo, "body")], {
+      "Length": S[S.length - 1].x - S[0].x,
+      "Max half-width": Math.max(...S.map(s => s.w)),
+      "Max height": Math.max(...S.map(s => s.zu - s.zl)),
+      "Stations (NX)": S.length,
+      "Nose shape (BNOSE)": num(NL(cse, "BODY"), "BNOSE", NaN) === 1 ? "conical" :
+                            num(NL(cse, "BODY"), "BNOSE", NaN) === 2 ? "ogive" : "—",
+    });
+  } else warn("No $BODY station table — no fuselage drawn.");
+
+  const syn = NL(cse, "SYNTHS");
+  const surfaces = [
+    { key: "WG", afKey: "W", label: "Wing", kind: "wing",
+      x: num(syn, "XW", 0), z: num(syn, "ZW", 0), inc: num(syn, "ALIW", 0), vertical: false },
+    { key: "HT", afKey: "H", label: "Horizontal tail", kind: "htail",
+      x: num(syn, "XH", NaN), z: num(syn, "ZH", 0), inc: num(syn, "ALIH", 0), vertical: false },
+    { key: "VT", afKey: "V", label: "Vertical tail", kind: "vtail",
+      x: num(syn, "XV", NaN), z: num(syn, "ZV", 0), inc: 0, vertical: true },
+    { key: "VF", afKey: "F", label: "Vertical fin", kind: "vfin",
+      x: num(syn, "XVF", NaN), z: num(syn, "ZVF", 0), inc: 0, vertical: true },
+  ];
+  const vertUp = bool(syn, "VERTUP", true);
+  const tvt = NL(cse, "TVTPAN");
+  const BH = num(tvt, "BH", NaN);
+
+  for (const sf of surfaces) {
+    const pf = buildDigitalPlanform(cse, sf.key, warn);
+    if (!pf) continue;
+    if (!isNum(sf.x)) { warn(`$${sf.key}PLNF is present but $SYNTHS has no X${sf.key[0]} apex location — placed at x = 0.`); sf.x = 0; }
+    const sec = digitalSection(cse, sf.key, sf.afKey, warn);
+
+    const sides = sf.vertical
+      ? (isNum(BH) && sf.key === "VT" ? [{ y: BH / 2 }, { y: -BH / 2 }] : [{ y: 0 }])
+      : (opts.mirror ? [{ s: 1 }, { s: -1 }] : [{ s: 1 }]);
+
+    const meshes = [];
+    for (const side of sides) {
+      const stations = pf.bps.map(b => {
+        let org, spanDir, thickDir;
+        if (sf.vertical) {
+          const sgn = vertUp ? 1 : -1;
+          org = V3(0, (side.y || 0) + b.z, sf.z + sgn * b.y);
+          spanDir = V3(0, 0, sgn); thickDir = V3(0, 1, 0);
+        } else {
+          const s = side.s;
+          org = V3(0, s * b.y, sf.z + b.z);
+          spanDir = V3(0, s, 0); thickDir = V3(0, 0, 1);
+        }
+        return { xle: sf.x + b.xle, chord: b.chord, sec, org, thickDir, spanDir,
+                 pivot: pf.CHSTAT, twist: b.twist };
+      });
+      const geo = surfaceMesh(stations);
+      let m;
+      if (Math.abs(sf.inc) > 1e-9) {          // root-chord incidence, LE up for +ALIW
+        const pivot = V3(sf.x, 0, sf.z);
+        geo.translate(-pivot.x, -pivot.y, -pivot.z);
+        m = meshFor(geo, sf.kind);
+        m.position.copy(pivot);
+        m.quaternion.setFromAxisAngle(V3(0, 1, 0), sf.inc * D2R);
+      } else {
+        m = meshFor(geo, sf.kind);
+      }
+      meshes.push(m);
+    }
+
+    // planform statistics (theoretical, both sides)
+    let area = 0, macNum = 0, macDen = 0;
+    for (let i = 0; i < pf.bps.length - 1; i++) {
+      const a0 = pf.bps[i], a1 = pf.bps[i + 1], dy = a1.y - a0.y;
+      const a = 0.5 * (a0.chord + a1.chord) * dy; area += a;
+      macNum += dy * (a0.chord ** 2 + a0.chord * a1.chord + a1.chord ** 2) / 3; macDen += a;
+    }
+    const Sref = 2 * area, b = 2 * pf.SSPN;
+    addPart(`${sf.label} ($${sf.key}PLNF)`, sf.kind, meshes, {
+      "Apex (x, z)": `${fmt(sf.x)}, ${fmt(sf.z)}`,
+      "Root chord": pf.CR, "Tip chord": pf.CT,
+      "Taper ratio": pf.CR > 0 ? pf.CT / pf.CR : NaN,
+      "Semispan SSPN": pf.SSPN, "Exposed semispan SSPNE": pf.SSPNE,
+      [sf.vertical ? "Panel area (1 side)" : "Planform area (both sides)"]: sf.vertical ? area : Sref,
+      [sf.vertical ? "Height" : "Span"]: sf.vertical ? pf.SSPN : b,
+      "Aspect ratio": sf.vertical ? (pf.SSPN ** 2) / (area || 1) : (b * b) / (Sref || 1),
+      "MAC": macDen > 0 ? macNum / macDen : NaN,
+      "Sweep @ CHSTAT": pf.SAVSI, "Outboard sweep": pf.cranked ? pf.SAVSO : "—",
+      "Dihedral": pf.DHI, "Planform TYPE": pf.TYPE,
+      "Section": sec.label,
+      "Incidence": sf.inc,
+    });
+    if (sf.key === "VT" && isNum(BH)) warn(`$TVTPAN present — the vertical panel is duplicated at y = ±BH/2 = ±${fmt(BH / 2)}.`);
+
+    // ---- flap / control surface overlay --------------------------------
+    if (sf.key === "WG") buildDigitalFlaps(cse, pf, sf, sec, warn, opts);
+
+    // ---- all-moveable horizontal tail hinge axis ------------------------
+    if (sf.key === "HT") {
+      const hx = num(syn, "HINAX", NaN);
+      if (isNum(hx)) for (const s of (opts.mirror ? [1, -1] : [1]))
+        HINGES.push([V3(hx, 0, sf.z), V3(hx, s * pf.SSPN, sf.z + pf.bps[pf.bps.length - 1].z)]);
+    }
+  }
+
+  const scale = num(syn, "SCALE", 1);
+  if (isNum(scale) && Math.abs(scale - 1) > 1e-9)
+    warn(`$SYNTHS SCALE=${fmt(scale)} is not applied — the configuration is drawn at the dimensions as written, so the shape is right but absolute sizes and derived areas are unscaled.`);
+
+  buildDigitalPower(cse, warn);
+  return body;
+}
+
+/**
+ * PROPWR propellers and JETPWR nacelles.  Both are located in absolute
+ * coordinates, so they are independent of the lifting surfaces.
+ */
+function buildDigitalPower(cse, warn) {
+  // ---------------- propellers ----------------
+  const pw = NL(cse, "PROPWR");
+  if (pw) {
+    const R = num(pw, "PRPRAD", NaN), xh = num(pw, "PHALOC", NaN);
+    if (isNum(R) && R > 0 && isNum(xh)) {
+      const zh = num(pw, "PHVLOC", 0), yp = num(pw, "YP", 0);
+      const inc = num(pw, "AIETLP", 0);
+      const nEng = Math.max(1, Math.round(num(pw, "NENGSP", 1)));
+      const nBl = clamp(Math.round(num(pw, "NOPBPE", 4)), 2, 12);
+      const meshes = [];
+      const ys = nEng >= 2 ? [yp, -yp] : [0];
+      ys.forEach(y => {
+        const parts = [];
+        const ring = new THREE.TorusGeometry(R, R * 0.018, 8, 56); ring.rotateY(Math.PI / 2);
+        parts.push(ring);
+        const hub = new THREE.CylinderGeometry(R * 0.085, R * 0.085, R * 0.28, 18);
+        hub.rotateZ(Math.PI / 2); parts.push(hub);
+        for (let k = 0; k < nBl; k++) {                   // simple constant-chord blades
+          const b = new THREE.BoxGeometry(R * 0.035, R * 0.86, R * 0.13);
+          b.translate(0, R * 0.55, 0);
+          b.rotateX(2 * Math.PI * k / nBl);
+          parts.push(b);
+        }
+        parts.forEach(g => {
+          if (inc) g.rotateY(inc * D2R);                  // thrust-axis incidence
+          g.translate(xh, y, zh);
+          meshes.push(meshFor(g, "prop"));
+        });
+      });
+      addPart(`Propellers (${nEng} × ${nBl}-blade)`, "prop", meshes, {
+        "Hub (x, z)": `${fmt(xh)}, ${fmt(zh)}`,
+        "Lateral YP": yp, "Radius PRPRAD": R, "Diameter": 2 * R,
+        "Blades/engine": nBl, "Thrust incidence": inc,
+        "Counter-rotating": bool(pw, "CROT", false) ? "yes" : "no",
+      });
+      warn("Propellers are drawn as a disc ring, hub and constant-chord blades at PHALOC/PHVLOC/±YP — blade planform (BWAPR3/6/9, BAPR75) is not modelled.");
+    } else warn("$PROPWR needs PRPRAD and PHALOC to be drawn — propellers skipped.");
+  }
+
+  // ---------------- jet nacelles ----------------
+  const jp = NL(cse, "JETPWR");
+  if (jp) {
+    const xi = num(jp, "JIALOC", NaN), xe = num(jp, "JEALOC", NaN);
+    if (isNum(xi) && isNum(xe) && xe > xi) {
+      const rE = num(jp, "JERAD", NaN);
+      const area = num(jp, "JINLTA", NaN);
+      const rI = isNum(area) && area > 0 ? Math.sqrt(area / Math.PI) : (isNum(rE) ? rE : 1);
+      const rEx = isNum(rE) ? rE : rI;
+      const ze = num(jp, "JEVLOC", 0), yl = num(jp, "JELLOC", 0);
+      const inc = num(jp, "AIETLJ", 0);
+      const nEng = Math.max(1, Math.round(num(jp, "NENGSJ", 1)));
+      const meshes = [];
+      const ys = nEng >= 2 ? [yl, -yl] : [0];
+      ys.forEach(y => {
+        const g = new THREE.CylinderGeometry(rEx, rI, xe - xi, 28, 1, true);
+        g.rotateZ(-Math.PI / 2);                          // axis +Y -> +X, top (rEx) aft
+        if (inc) g.rotateY(inc * D2R);
+        g.translate((xi + xe) / 2, y, ze);
+        meshes.push(meshFor(g, "jet"));
+      });
+      addPart(`Jet nacelles (${nEng})`, "jet", meshes, {
+        "Inlet x (JIALOC)": xi, "Exit x (JEALOC)": xe,
+        "Exit (y, z)": `${fmt(yl)}, ${fmt(ze)}`,
+        "Inlet radius": rI, "Exit radius (JERAD)": rEx,
+        "Thrust incidence": inc, "Exit angle": num(jp, "JEANGL", NaN),
+      });
+      warn("Jet nacelles are drawn as a duct from JIALOC to JEALOC, the inlet radius derived from JINLTA and the exit from JERAD.");
+    } else warn("$JETPWR needs JIALOC and JEALOC (with JEALOC > JIALOC) to be drawn — nacelles skipped.");
+  }
+}
+
+function buildDigitalFlaps(cse, pf, sf, sec, warn, opts) {
+  /** deflFn(side) -> deflection in degrees for side = +1 (starboard) / -1 (port) */
+  const mk = (name, spanI, spanO, chI, chO, deflFn) => {
+    if (!isNum(spanO) || spanO <= 0) return;
+    const meshes = [];
+    const chordAt = y => {
+      const B = pf.bps;
+      if (y <= B[0].y) return { c: B[0].chord, xle: B[0].xle, z: B[0].z };
+      for (let i = 1; i < B.length; i++) if (y <= B[i].y) {
+        const f = (y - B[i - 1].y) / (B[i].y - B[i - 1].y || 1);
+        return { c: B[i - 1].chord + f * (B[i].chord - B[i - 1].chord),
+                 xle: B[i - 1].xle + f * (B[i].xle - B[i - 1].xle),
+                 z: B[i - 1].z + f * (B[i].z - B[i - 1].z) };
+      }
+      const L = B[B.length - 1]; return { c: L.chord, xle: L.xle, z: L.z };
+    };
+    const shown = [];
+    for (const s of (opts.mirror ? [1, -1] : [1])) {
+      const defl = deflFn(s) * opts.defScale;
+      shown.push(`${s > 0 ? "stbd" : "port"} ${fmt(defl, 1)}°`);
+      const sts = [spanI, spanO].map((y, i) => {
+        const g = chordAt(y), cf = i === 0 ? chI : chO;
+        return { xle: sf.x + g.xle + g.c - cf, chord: cf, sec: makeSection({ type: "TC", tc: 0.06 }),
+                 org: V3(0, s * y, sf.z + g.z), thickDir: V3(0, 0, 1), spanDir: V3(0, s, 0), pivot: 0 };
+      });
+      const geo = surfaceMesh(sts);
+      let m;
+      if (Math.abs(defl) > 1e-9) {
+        const gI = chordAt(spanI);
+        const pivot = V3(sf.x + gI.xle + gI.c - chI, 0, sf.z + gI.z);
+        geo.translate(-pivot.x, -pivot.y, -pivot.z);
+        m = meshFor(geo, "flap");
+        m.position.copy(pivot);
+        // +delta = trailing edge down, mirrored consistently on the port side
+        m.quaternion.setFromAxisAngle(V3(0, s, 0), s * defl * D2R);
+      } else {
+        m = meshFor(geo, "flap");
+      }
+      meshes.push(m);
+    }
+    const gI = chordAt(spanI), gO = chordAt(spanO);
+    for (const s of (opts.mirror ? [1, -1] : [1])) {
+      HINGES.push([V3(sf.x + gI.xle + gI.c - chI, s * spanI, sf.z + gI.z),
+                   V3(sf.x + gO.xle + gO.c - chO, s * spanO, sf.z + gO.z)]);
+    }
+    addPart(name, "flap", meshes, {
+      "Span station in/out": `${fmt(spanI)} → ${fmt(spanO)}`,
+      "Flap chord in/out": `${fmt(chI)} → ${fmt(chO)}`,
+      "Deflection shown": shown.join(" / "),
+    });
+  };
+
+  const sym = NL(cse, "SYMFLP");
+  if (sym) {
+    const dl = narr(sym, "DELTA");
+    const d = pickDeflection(dl);
+    if (dl.length > 1) warn(`$SYMFLP defines ${dl.length} deflection angles (${dl.join(", ")}°) — the one selected under Display is drawn.`);
+    mk("Symmetric flap ($SYMFLP)", num(sym, "SPANFI", 0), num(sym, "SPANFO", NaN),
+       num(sym, "CHRDFI", 0), num(sym, "CHRDFO", 0), () => d);
+  }
+  const asy = NL(cse, "ASYFLP");
+  if (asy) {
+    const dl = narr(asy, "DELTAL"), dr = narr(asy, "DELTAR");
+    const l = pickDeflection(dl), r = pickDeflection(dr);
+    mk("Asymmetric control ($ASYFLP)", num(asy, "SPANFI", 0), num(asy, "SPANFO", NaN),
+       num(asy, "CHRDFI", 0), num(asy, "CHRDFO", 0), s => (s > 0 ? r : l));
+  }
+}
+
+/** Which of an NDELTA deflection schedule to draw (chosen in the Display panel). */
+let FLAP_PICK = 0;
+function pickDeflection(list) {
+  if (!list.length) return 0;
+  const i = clamp(Math.round(FLAP_PICK), 0, list.length - 1);
+  return isNum(list[i]) ? list[i] : 0;
+}
+/** Index of the value nearest zero — the sensible default for a geometry view. */
+function nearestZeroIndex(list) {
+  let best = 0;
+  list.forEach((v, i) => { if (Math.abs(v) < Math.abs(list[best])) best = i; });
+  return best;
+}
+
+/* =======================================================================
+   10.  HELPERS IN THE SCENE (axes, grid, CG, rings, hinge lines)
+   ======================================================================= */
+
+function rebuildHelpers(body, cse, flavor) {
+  while (helpers.children.length) {
+    const c = helpers.children.pop();
+    c.traverse(o => { if (o.geometry) o.geometry.dispose(); });
+  }
+  if (!MODEL_BOX || MODEL_BOX.isEmpty()) return;
+  const size = MODEL_BOX.getSize(new THREE.Vector3()).length() || 1;
+  const ctr = MODEL_BOX.getCenter(new THREE.Vector3());
+
+  if (ui("o-grid")) {
+    const g = new THREE.GridHelper(size * 2.2, 24, 0x2a313b, 0x21272f);
+    g.position.set(ctr.x, MODEL_BOX.min.y - size * 0.06, ctr.z);
+    g.material.transparent = true; g.material.opacity = 0.7;
+    helpers.add(g);
+  }
+  if (ui("o-axes")) {
+    const L = size * 0.22;
+    const ax = new THREE.Group();
+    const mkAxis = (dir, col) => {
+      const p = [new THREE.Vector3(), dir.clone().multiplyScalar(L)];
+      const l = new THREE.Line(new THREE.BufferGeometry().setFromPoints(p),
+        new THREE.LineBasicMaterial({ color: col }));
+      ax.add(l);
+      const cone = new THREE.Mesh(new THREE.ConeGeometry(L * 0.035, L * 0.11, 12),
+        new THREE.MeshBasicMaterial({ color: col }));
+      cone.position.copy(dir.clone().multiplyScalar(L));
+      cone.quaternion.setFromUnitVectors(V3(0, 1, 0), dir);
+      ax.add(cone);
+    };
+    mkAxis(V3(1, 0, 0), 0xe06c5c);   // three-X  = DATCOM +X (aft)
+    mkAxis(V3(0, 1, 0), 0x4da3ff);   // three-Y  = DATCOM +Z (up)
+    mkAxis(V3(0, 0, -1), 0x59d09a);  // three-(-Z) = DATCOM +Y (starboard)
+    ax.position.set(MODEL_BOX.min.x - size * 0.06, MODEL_BOX.min.y, 0);
+    helpers.add(ax);
+  }
+  const toThree = v => V3(v.x, v.z, -v.y);
+  if (ui("o-cl") && body) {
+    const S = body.stations;
+    const pts = [toThree(V3(S[0].x, 0, 0)), toThree(V3(S[S.length - 1].x, 0, 0))];
+    helpers.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),
+      new THREE.LineDashedMaterial({ color: 0x6f7c8d, dashSize: size * 0.02, gapSize: size * 0.014 })).computeLineDistances());
+  }
+  if (ui("o-rings") && body) {
+    body.stations.forEach((s, i) => {
+      if (i % Math.max(1, Math.round(body.stations.length / 22))) return;
+      const pts = [];
+      for (let j = 0; j <= 40; j++) {
+        const t = 2 * Math.PI * j / 40;
+        const halfZ = ("zu" in s) ? (Math.cos(t) >= 0 ? s.zu : -s.zl) : s.h;
+        pts.push(toThree(V3(s.x, s.w * Math.sin(t), (s.zc || 0) + halfZ * Math.cos(t))));
+      }
+      helpers.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),
+        new THREE.LineBasicMaterial({ color: 0x4da3ff, transparent: true, opacity: 0.35 })));
+    });
+  }
+  // GRNDEF: reference plane sits GRDHT above the ground, so ground is at z = -GRDHT
+  const gnd = NL(cse, "GRNDEF");
+  if (gnd) {
+    const hs = narr(gnd, "GRDHT");
+    if (hs.length) {
+      const p = new THREE.Mesh(new THREE.PlaneGeometry(size * 2.4, size * 2.4),
+        new THREE.MeshStandardMaterial({ color: 0x3a4653, transparent: true, opacity: 0.5,
+                                         side: THREE.DoubleSide, roughness: 0.9 }));
+      p.rotation.x = -Math.PI / 2;                       // three.js Y is DATCOM Z
+      p.position.set(ctr.x, -hs[0], 0);
+      helpers.add(p);
+    }
+  }
+  if (ui("o-hinge") && HINGES.length) {
+    HINGES.forEach(([a, b]) => {
+      helpers.add(new THREE.Line(
+        new THREE.BufferGeometry().setFromPoints([toThree(a), toThree(b)]),
+        new THREE.LineBasicMaterial({ color: 0xe06c5c })));
+    });
+  }
+  if (ui("o-cg")) {
+    const xcg = flavor === "missile" ? num(NL(cse, "REFQ"), "XCG", NaN) : num(NL(cse, "SYNTHS"), "XCG", NaN);
+    const zcg = flavor === "missile" ? 0 : num(NL(cse, "SYNTHS"), "ZCG", 0);
+    if (isNum(xcg)) {
+      const r = size * 0.022;
+      const g = new THREE.Group();
+      for (let q = 0; q < 4; q++) {
+        const m = new THREE.Mesh(new THREE.CircleGeometry(r, 16, q * Math.PI / 2, Math.PI / 2),
+          new THREE.MeshBasicMaterial({ color: q % 2 ? 0xffffff : 0x14171c, side: THREE.DoubleSide }));
+        g.add(m);
+      }
+      g.position.copy(toThree(V3(xcg, 0, zcg)));
+      helpers.add(g);
+      const ring = new THREE.Mesh(new THREE.RingGeometry(r * 0.98, r * 1.12, 32),
+        new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide }));
+      ring.position.copy(g.position); helpers.add(ring);
+    }
+  }
+}
+const ui = id => document.getElementById(id).checked;
+
+/* =======================================================================
+   11.  ORCHESTRATION
+   ======================================================================= */
+
+let DECK = null, CASES = [], CASE_I = 0, WARNINGS = [], FLAVOR = "";
+
+function detectFlavor(cse) {
+  const k = Object.keys(cse.nl);
+  const m = ["AXIBOD", "ELLBOD", "PROTUB", "INLET", "REFQ", "DEFLCT"].filter(n => k.includes(n)).length
+          + k.filter(n => /^FINSET[1-9]$/.test(n)).length;
+  const d = ["BODY", "SYNTHS", "WGPLNF", "HTPLNF", "VTPLNF", "VFPLNF", "OPTINS", "SYMFLP", "ASYFLP", "TVTPAN"]
+    .filter(n => k.includes(n)).length;
+  if (m === 0 && d === 0) return "";
+  return m >= d ? "missile" : "digital";
+}
+
+function currentOpts() {
+  return {
+    defScale: +document.getElementById("defScale").value,
+    mirror: ui("o-mirror"),
+  };
+}
+
+/** Populate the control-deflection picker from $SYMFLP / $ASYFLP. */
+function syncFlapPicker(cse, reset) {
+  const sym = NL(cse, "SYMFLP"), asy = NL(cse, "ASYFLP");
+  const list = sym ? narr(sym, "DELTA") : (asy ? narr(asy, "DELTAR") : []);
+  const wrap = document.getElementById("flapWrap"), sel = document.getElementById("flapSel");
+  if (list.length < 2) { wrap.style.display = "none"; if (reset) FLAP_PICK = 0; return; }
+  if (reset) FLAP_PICK = nearestZeroIndex(list);
+  sel.innerHTML = "";
+  list.forEach((v, i) => {
+    const o = document.createElement("option");
+    o.value = i; o.textContent = `δ = ${fmt(v, 1)}°`;
+    if (i === FLAP_PICK) o.selected = true;
+    sel.appendChild(o);
+  });
+  wrap.style.display = "";
+}
+
+function rebuild() {
+  const cse = CASES[CASE_I];
+  if (!cse) return;
+  WARNINGS = [];
+  const warn = m => { if (!WARNINGS.includes(m)) WARNINGS.push(m); };
+  clearModel();
+  FLAVOR = detectFlavor(cse);
+  let body = null;
+  try {
+    if (FLAVOR === "missile") body = buildMissileModel(cse, warn, currentOpts());
+    else if (FLAVOR === "digital") body = buildDigitalModel(cse, warn, currentOpts());
+    else warn("No recognised geometry namelists in this case — nothing to draw.");
+  } catch (e) {
+    warn("Geometry build failed: " + e.message);
+    console.error(e);
+  }
+  model.updateMatrixWorld(true);
+  MODEL_BOX = new THREE.Box3().setFromObject(model);
+  applyDisplay();
+  rebuildHelpers(body, cse, FLAVOR);
+  renderPartList();
+  renderStats();
+  renderMessages();
+  renderTitle(cse);
+  document.getElementById("empty").style.display = PARTS.length ? "none" : "flex";
+  document.getElementById("raw").textContent = rawDump(cse);
+  updateHud(cse);
+}
+
+function loadText(text, name) {
+  try {
+    CASES = parseDeck(text);
+  } catch (e) {
+    CASES = []; console.error(e);
+    WARNINGS = ["Could not parse the deck: " + e.message]; renderMessages(); return;
+  }
+  DECK = { name, text };
+  CASE_I = 0;
+  const sel = document.getElementById("caseSel");
+  sel.innerHTML = "";
+  CASES.forEach((c, i) => {
+    const o = document.createElement("option");
+    o.value = i;
+    o.textContent = `${i + 1}. ${c.title || "(untitled case)"}`;
+    sel.appendChild(o);
+  });
+  document.getElementById("caseWrap").style.display = CASES.length > 1 ? "" : "none";
+  syncFlapPicker(CASES[0], true);
+  rebuild();
+  fitView();
+}
+
+/* ---------- UI rendering -------------------------------------------------- */
+
+function renderTitle(cse) {
+  const t = document.getElementById("title");
+  // identify the deck by the namelist family it uses, not by which code it targets
+  const flav = FLAVOR === "missile" ? "$AXIBOD / $FINSET deck"
+             : FLAVOR === "digital" ? "$BODY / $SYNTHS deck" : "unrecognised deck";
+  t.innerHTML = `<b>${escapeHtml(cse.title || DECK?.name || "")}</b>
+    <span>${flav}${cse.units ? " · units: " + cse.units : ""}</span>`;
+}
+
+function renderPartList() {
+  const el = document.getElementById("parts");
+  if (!PARTS.length) { el.innerHTML = '<span class="sub">Nothing to display.</span>'; return; }
+  el.innerHTML = "";
+  PARTS.forEach((p, i) => {
+    const lab = document.createElement("label");
+    lab.className = "chk";
+    lab.innerHTML = `<input type="checkbox" ${p.visible ? "checked" : ""}>
+      <span class="swatch" style="background:${COLORS[p.kind] || "#888"}"></span>
+      <span>${escapeHtml(p.name)}</span>`;
+    lab.querySelector("input").onchange = e => { p.visible = e.target.checked; p.group.visible = p.visible; };
+    el.appendChild(lab);
+  });
+  const r = document.createElement("div"); r.className = "row";
+  const all = document.createElement("button"); all.textContent = "All";
+  const none = document.createElement("button"); none.textContent = "None";
+  all.onclick = () => { PARTS.forEach(p => { p.visible = true; p.group.visible = true; }); renderPartList(); };
+  none.onclick = () => { PARTS.forEach(p => { p.visible = false; p.group.visible = false; }); renderPartList(); };
+  r.appendChild(all); r.appendChild(none); el.appendChild(r);
+}
+
+function renderStats() {
+  const el = document.getElementById("stats");
+  if (!PARTS.length) { el.innerHTML = '<span class="sub">No deck loaded.</span>'; return; }
+  el.innerHTML = "";
+  PARTS.forEach(p => {
+    if (!p.stats) return;
+    const d = document.createElement("div"); d.className = "partstat";
+    let rows = "";
+    for (const k in p.stats) {
+      const v = p.stats[k];
+      const isAngle = /sweep|dihedral|incidence|deflection|GAM|PHIF/i.test(k);
+      rows += `<tr><td class="k">${escapeHtml(k)}</td><td class="v">${
+        typeof v === "number" ? fmt(v) + (isAngle ? "°" : "") : escapeHtml(String(v))}</td></tr>`;
+    }
+    d.innerHTML = `<h4>${escapeHtml(p.name)}</h4><table class="kv">${rows}</table>`;
+    el.appendChild(d);
+  });
+}
+
+function renderMessages() {
+  const el = document.getElementById("msgs");
+  el.innerHTML = "";
+  if (!WARNINGS.length) {
+    el.innerHTML = '<div class="msg info">Deck parsed with no warnings.</div>';
+    return;
+  }
+  WARNINGS.forEach(w => {
+    const d = document.createElement("div");
+    d.className = "msg " + (/failed|cannot|could not/i.test(w) ? "err" : "warn");
+    d.textContent = w; el.appendChild(d);
+  });
+}
+
+function rawDump(cse) {
+  const lines = [];
+  if (cse.units) lines.push("DIM " + cse.units);
+  Object.keys(cse.nl).sort().forEach(n => {
+    lines.push("$" + n);
+    Object.keys(cse.nl[n]).sort().forEach(k => {
+      const a = cse.nl[n][k];
+      const dense = [];
+      for (let i = 0; i < a.length; i++) dense.push(a[i] === undefined ? "·" : a[i]);
+      lines.push("    " + k.padEnd(9) + "= " + dense.join(", "));
+    });
+  });
+  if (cse.airfoils.length) {
+    lines.push("airfoil cards");
+    cse.airfoils.forEach(a => lines.push(`    ${a.raw}   → key ${a.key}, ${a.series}-series, ${a.desig}`));
+  }
+  const other = cse.cards.filter(c => !/^CASEID|^DIM /i.test(c));
+  if (other.length) { lines.push("control cards"); lines.push("    " + other.join("  ·  ")); }
+  return lines.join("\n");
+}
+
+function updateHud(cse) {
+  const u = cse.units ? ` ${cse.units.toLowerCase()}` : " length units";
+  if (MODEL_BOX.isEmpty()) { document.getElementById("hud").textContent = ""; return; }
+  const s = MODEL_BOX.getSize(new THREE.Vector3());
+  document.getElementById("hud").innerHTML =
+    `overall  X ${fmt(s.x)}${u} · Y ${fmt(s.z)}${u} · Z ${fmt(s.y)}${u}<br>` +
+    `drag = orbit · wheel = zoom · right-drag = pan`;
+}
+
+const escapeHtml = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+/* ---------- camera -------------------------------------------------------- */
+
+function fitView(dir) {
+  if (MODEL_BOX.isEmpty()) return;
+  const ctr = MODEL_BOX.getCenter(new THREE.Vector3());
+  const r = MODEL_BOX.getSize(new THREE.Vector3()).length() / 2 || 1;
+  const d = r / Math.sin(camera.fov * D2R / 2) * 1.12;
+  // keep the current viewing direction, but never a degenerate one (first load)
+  let v = dir ? dir.clone() : camera.position.clone().sub(controls.target);
+  if (v.lengthSq() < 1e-12) v = VIEWS.iso.clone();
+  camera.position.copy(ctr).add(v.normalize().multiplyScalar(d));
+  controls.target.copy(ctr);
+  camera.near = d / 400; camera.far = d * 40; camera.updateProjectionMatrix();
+  controls.update();
+}
+// view directions expressed in three.js space (three = [Xd, Zd, -Yd])
+const VIEWS = {
+  iso:   V3(-0.75, 0.45, 0.95),
+  side:  V3(0, 0, 1),     // from port side, nose left
+  top:   V3(0, 1, 0.0001),
+  front: V3(-1, 0, 0),    // looking aft from ahead of the nose
+  rear:  V3(1, 0, 0),
+};
+
+/* ---------- events -------------------------------------------------------- */
+
+document.querySelectorAll("section.grp>h2").forEach(h =>
+  h.onclick = () => h.parentElement.classList.toggle("collapsed"));
+
+const drop = document.getElementById("drop"), fileIn = document.getElementById("file");
+drop.onclick = () => fileIn.click();
+fileIn.onchange = e => { const f = e.target.files[0]; if (f) readFile(f); };
+["dragenter", "dragover"].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.add("over"); }));
+["dragleave", "drop"].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.remove("over"); }));
+drop.addEventListener("drop", e => { const f = e.dataTransfer.files[0]; if (f) readFile(f); });
+document.addEventListener("dragover", e => e.preventDefault());
+document.addEventListener("drop", e => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) readFile(f); });
+function readFile(f) { const r = new FileReader(); r.onload = () => loadText(r.result, f.name); r.readAsText(f); }
+
+document.getElementById("caseSel").onchange = e => {
+  CASE_I = +e.target.value; syncFlapPicker(CASES[CASE_I], true); rebuild(); fitView();
+};
+document.getElementById("flapSel").onchange = e => { FLAP_PICK = +e.target.value; rebuild(); };
+document.querySelectorAll("#modeRow button").forEach(b => b.onclick = () => {
+  document.querySelectorAll("#modeRow button").forEach(x => x.classList.remove("on"));
+  b.classList.add("on"); DISPLAY = b.dataset.mode; applyDisplay();
+});
+document.querySelectorAll("#vbar button[data-view]").forEach(b => b.onclick = () => {
+  if (b.dataset.view === "fit") fitView(); else fitView(VIEWS[b.dataset.view].clone());
+});
+document.getElementById("snap").onclick = () => {
+  renderer.render(scene, camera);
+  const a = document.createElement("a");
+  a.download = (DECK?.name || "datcomViz").replace(/\.[^.]+$/, "") + ".png";
+  a.href = canvas.toDataURL("image/png"); a.click();
+};
+["o-axes", "o-grid", "o-cl", "o-cg", "o-rings", "o-hinge"].forEach(id =>
+  document.getElementById(id).onchange = () => {
+    const cse = CASES[CASE_I]; if (!cse) return;
+    rebuildHelpers(FLAVOR === "missile" ? buildMissileBody(cse, () => {}) : buildDigitalBody(cse, () => {}), cse, FLAVOR);
+  });
+document.getElementById("o-mirror").onchange = () => rebuild();
+const dsl = document.getElementById("defScale");
+dsl.oninput = () => {
+  document.getElementById("defScaleV").textContent = Math.round(dsl.value * 100) + "%";
+  rebuild();
+};
+
+function resize() {
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  if (canvas.width !== w || canvas.height !== h) {
+    renderer.setSize(w, h, false);
+    camera.aspect = w / h; camera.updateProjectionMatrix();
+  }
+}
+(function loop() {
+  requestAnimationFrame(loop);
+  resize(); controls.update(); renderer.render(scene, camera);
+})();
+
+
+/* ---------- notes panel --------------------------------------------------- */
+document.getElementById("about").innerHTML = `
+<div class="msg info">This is a <b>view-only</b> tool. It parses an input deck and draws the
+geometry it describes. It does not run DATCOM, read output files, or write anything.</div>
+<p class="sub"><b>Covered — <code>AXIBOD</code>/<code>FINSET</code> decks:</b>
+<code>AXIBOD</code> and <code>ELLBOD</code>
+(option 1 nose/centrebody/afterbody with CONE, OGIVE, POWER, HAACK and KARMAN shapes,
+bluntness and truncation, conic centrebodies, boattails and flares; option 2 X/R or
+X/W/H/ELLIP tables with <code>Z</code> camber), <code>FINSET1–9</code> (multi-segment
+planforms via XLE or SWEEP/STA, SSPAN(1)=0 auto-placement, HEX / ARC / NACA / USER sections,
+NPANEL, PHIF, GAM), <code>DEFLCT</code> (DELTAn, XHINGE, SKEW), <code>PROTUB</code> (all six PTYPE values),
+<code>INLET</code> (2DSIDE, 2DTOP, AXI), and <code>REFQ</code> XCG. Supersonic
+<code>NACA-n-S-…</code> cards — diamond, circular-arc and hexagonal — are drawn to their
+exact stated thickness and break points.</p>
+<p class="sub"><b>Case handling.</b> The two deck families persist inputs differently and
+both rules are honoured. An <code>AXIBOD</code>/<code>FINSET</code> deck carries a case's
+namelists into the next case only when that case ends with a <code>SAVE</code> card, and
+<code>DELETE</code> purges named ones — so swapping <code>AXIBOD</code> for
+<code>ELLBOD</code> between cases works. A <code>BODY</code>/<code>SYNTHS</code> deck
+retains inputs from case to case automatically and has no <code>DELETE</code>.</p>
+<p class="sub"><b>Covered — <code>BODY</code>/<code>SYNTHS</code> decks:</b>
+<code>BODY</code> (X/R/ZU/ZL, with S or P
+as a fallback for R), <code>SYNTHS</code> placement including VERTUP and incidence,
+<code>WGPLNF / HTPLNF / VTPLNF / VFPLNF</code> (TYPE 1 straight-tapered and TYPE 2/3
+cranked planforms, SAVSI/SAVSO at CHSTAT, DHDADI/DHDADO, SSPNDD, TWISTA),
+<code>TVTPAN</code> twin panels, <code>SYMFLP</code> and <code>ASYFLP</code> control
+surfaces, <code>PROPWR</code> propeller discs, <code>JETPWR</code> nacelles,
+<code>GRNDEF</code> ground plane, the <code>HINAX</code> tail hinge axis, and sections
+from either an <code>NACA-W/H/V/F-…</code> card or the matching
+<code>WGSCHR</code>/<code>HTSCHR</code>/<code>VTSCHR</code>/<code>VFSCHR</code>
+namelist (<code>TYPEIN=1</code> surface coordinates, <code>TYPEIN=2</code> mean line plus
+thickness, or a bare <code>TOVC</code>).</p>
+<p class="sub"><b>Approximations worth knowing:</b></p>
+<p class="sub">• In <code>BODY</code> decks <code>ZL</code> is documented as positive below
+the centreline but is conventionally written signed; magnitudes are used, so either
+convention draws correctly.</p>
+<p class="sub">• Airfoil thickness for NACA 1-, 5-, 6- and 7-series cards uses the
+4-digit thickness distribution scaled to the t/c implied by the last two digits;
+camber is drawn only for 4-digit sections. Supply <code>xxSCHR</code> coordinates
+(<code>XCORD</code> with <code>YUPPER/YLOWER</code> or <code>MEAN/THICK</code>) for an
+exact section.</p>
+<p class="sub">• Protuberances are simplified primitives; inlets are lofted ducts through
+the five X/H/W stations without internal cowl or ramp detail.</p>
+<p class="sub">• Nose bluntness solves for the virtual sharp-nose length so that the
+drawn nose measures exactly <code>LNOSE</code> (Figure 3). With option 2 body tables the
+points are drawn as given.</p>
+<p class="sub">• Aerodynamic namelists (FLTCON, EXPR, TRIM, and the rest) are parsed and
+listed but have no geometric effect.</p>
+`;
+
+</script>
+</body>
+</html>
