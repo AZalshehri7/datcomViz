@@ -71,7 +71,7 @@
   pre.raw{margin:0;font:11px/1.4 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
     white-space:pre-wrap;word-break:break-word;color:#b9c2cf;max-height:340px;overflow:auto}
   /* ---------- viewport ---------- */
-  #view{flex:1;position:relative;min-width:0}
+  #view{flex:1;display:flex;flex-direction:column;min-width:0}
   #cv{display:block;width:100%;height:100%}
   #hud{position:absolute;left:12px;bottom:10px;color:var(--dim);font-size:11px;
     text-shadow:0 1px 3px #000;pointer-events:none;line-height:1.5}
@@ -90,6 +90,51 @@
     #view{flex:none;height:48vh}
     #vbar{gap:4px}#vbar button{padding:4px 7px;font-size:11px}
   }
+
+  /* ---------- tabs & case builder ---------- */
+  #tabs{display:flex;gap:2px;padding:6px 10px 0;background:var(--panel);
+    border-bottom:1px solid var(--line);flex:0 0 auto}
+  #tabs button{background:transparent;border:1px solid transparent;border-bottom:none;
+    border-radius:6px 6px 0 0;padding:6px 14px;font-size:12.5px;color:var(--dim)}
+  #tabs button:hover{color:var(--fg)}
+  #tabs button.on{background:var(--bg);border-color:var(--line);color:var(--fg);
+    font-weight:600;margin-bottom:-1px;padding-bottom:7px}
+  #panes{flex:1;position:relative;min-height:0}
+  #geomPane,#casePane{position:absolute;inset:0}
+  #casePane{display:none;overflow:hidden}
+  #casePane.on{display:flex}
+  #geomPane.off{display:none}
+  #cbLeft{width:52%;min-width:380px;overflow-y:auto;padding:14px 16px;
+    border-right:1px solid var(--line)}
+  #cbRight{flex:1;display:flex;flex-direction:column;min-width:0}
+  #cbBar{display:flex;gap:6px;align-items:center;flex-wrap:wrap;
+    padding:10px 14px;border-bottom:1px solid var(--line)}
+  #cbOut{flex:1;margin:0;padding:12px 14px;overflow:auto;white-space:pre;
+    font:11.5px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#c3ccd8}
+  .cbrow{border:1px solid var(--line);border-radius:7px;padding:9px 11px;margin-bottom:8px;
+    background:var(--panel)}
+  .cbrow.off{opacity:.5}
+  .cbrow>header{display:flex;align-items:center;gap:8px;cursor:pointer}
+  .cbrow>header input{accent-color:var(--accent);margin:0}
+  .cbrow>header b{font-size:12.5px;font-weight:600}
+  .cbrow>header .tag{margin-left:auto;font-size:10px;letter-spacing:.5px;
+    text-transform:uppercase;color:var(--dim);border:1px solid var(--line);
+    border-radius:4px;padding:1px 6px}
+  .cbrow .fields{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:8px}
+  .cbrow.off .fields,.cbrow.off .prev{display:none}
+  .cbrow select,.cbrow input[type=text]{width:auto;padding:3px 6px;font-size:11.5px}
+  .cbrow input.num{width:66px;text-align:right;font-variant-numeric:tabular-nums}
+  .cbrow input.wide{flex:1;min-width:150px}
+  .cbrow .prev{margin-top:6px;font-size:11px;color:#7f8b9a;font-family:ui-monospace,monospace;
+    word-break:break-word}
+  .cbrow .pat{display:flex;gap:4px;align-items:center;margin-top:6px;flex-wrap:wrap}
+  .cbrow .pat input{width:44px;text-align:center;font-size:11.5px;padding:3px 2px}
+  .cbrow .pat span{font-size:11px;color:var(--dim)}
+  .cbsec{font-size:10.5px;text-transform:uppercase;letter-spacing:.9px;color:var(--dim);
+    margin:14px 0 7px}
+  .cbsec:first-child{margin-top:0}
+  #cbSummary{font-size:11.5px;color:var(--dim);margin-right:auto}
+  #cbSummary b{color:var(--fg);font-variant-numeric:tabular-nums}
 </style>
 </head>
 <body>
@@ -164,6 +209,12 @@
   </div>
 
   <div id="view">
+    <div id="tabs">
+      <button id="tab-geom" class="on">Geometry</button>
+      <button id="tab-case">Cases</button>
+    </div>
+    <div id="panes">
+    <div id="geomPane">
     <canvas id="cv"></canvas>
     <div id="vbar">
       <button data-view="iso">Iso</button><button data-view="side">Side</button>
@@ -176,6 +227,21 @@
     <div id="empty"><h3>No geometry loaded</h3>
       <div>Drop a DATCOM input deck on the left panel to draw its geometry.</div>
       <div style="font-size:11.5px;color:#3f4854">Everything runs locally in your browser — your deck is never uploaded.</div></div>
+    </div><!-- /geomPane -->
+
+    <div id="casePane">
+      <div id="cbLeft"></div>
+      <div id="cbRight">
+        <div id="cbBar">
+          <span id="cbSummary"></span>
+          <label class="chk" style="font-size:11.5px"><input type="checkbox" id="cbRepeat" checked> Repeat every variable in each case</label>
+          <button id="cbCopy">Copy</button>
+          <button id="cbDl">Download .dat</button>
+        </div>
+        <pre id="cbOut"></pre>
+      </div>
+    </div><!-- /casePane -->
+    </div><!-- /panes -->
   </div>
 </div>
 
@@ -1786,6 +1852,7 @@ function rebuild() {
   renderTitle(cse);
   document.getElementById("empty").style.display = PARTS.length ? "none" : "flex";
   document.getElementById("raw").textContent = rawDump(cse);
+  if (CB.vars.length) { cbBuild(); cbRender(); cbGenerate(); }
   updateHud(cse);
 }
 
@@ -1979,6 +2046,7 @@ dsl.oninput = () => {
 
 function resize() {
   const w = canvas.clientWidth, h = canvas.clientHeight;
+  if (!w || !h) return;
   if (canvas.width !== w || canvas.height !== h) {
     renderer.setSize(w, h, false);
     camera.aspect = w / h; camera.updateProjectionMatrix();
@@ -1990,10 +2058,431 @@ function resize() {
 })();
 
 
+
+/* =======================================================================
+   13.  CASE BUILDER
+   Expands a set of sweep variables into DATCOM case text.  Which variables
+   can live as an array inside one case, and which force a new case, differs
+   between the two input forms:
+
+     AXIBOD/FINSET   ALPHA is an array of up to 100 and MACH up to 20, so an
+                     alpha-Mach matrix runs inside a single case.  BETA, PHI
+                     and the DEFLCT deflections are scalars, so sweeping any
+                     of them means one case per value.  BETA and PHI may not
+                     both appear in the same case (Table 3).
+     BODY/SYNTHS     ALSCHD, MACH, ALT and the SYMFLP/ASYFLP schedules are
+                     all arrays, so almost nothing needs a second case.
+   ======================================================================= */
+
+const CB = { form: "missile", vars: [], loop: 2, repeat: true };
+
+/* ---- value formatting ---------------------------------------------------- */
+function fmtF(v) {                                  // Fortran real literal
+  if (!isFinite(v)) return "0.";
+  if (Number.isInteger(v)) return Math.abs(v) >= 1e7 ? v.toExponential(4).replace("e", "E") : v.toFixed(0) + ".";
+  const r = parseFloat(v.toPrecision(8));
+  return (Math.abs(r) < 1e-4 || Math.abs(r) >= 1e7) ? r.toExponential(4).replace("e", "E") : String(r);
+}
+/** Collapse a constant array to Fortran repeat form, e.g. 3*2000000. */
+function collapse(vals) {
+  if (vals.length > 1 && vals.every(v => v === vals[0])) return [vals.length + "*" + fmtF(vals[0])];
+  return vals.map(fmtF);
+}
+
+/* ---- expanding a sweep specification ------------------------------------- */
+function expand(v) {
+  const out = [];
+  if (v.mode === "list") {
+    String(v.list || "").split(/[,\s]+/).forEach(t => { const x = parseFloat(t); if (isFinite(x)) out.push(x); });
+  } else if (v.mode === "count") {
+    const n = Math.max(1, Math.round(v.count || 1));
+    if (n === 1) out.push(v.a);
+    else for (let i = 0; i < n; i++) out.push(v.a + (v.b - v.a) * i / (n - 1));
+  } else {                                          // start / stop / step
+    const st = Math.abs(v.step) || 1, up = v.b >= v.a;
+    for (let i = 0, x = v.a; i < 500; i++, x = v.a + (up ? 1 : -1) * st * i)
+      { if (up ? x > v.b + 1e-9 : x < v.b - 1e-9) break; out.push(+x.toPrecision(10)); }
+  }
+  return out;
+}
+
+/* ---- namelist emission --------------------------------------------------- */
+/** parts: [{name, vals:[string]}] -> a wrapped "$NAME ... $" block. */
+function nlBlock(name, parts) {
+  const cont = "         ", lines = [];
+  let line = " $" + name + " ";
+  const push = tok => { if (line.length + tok.length > 74) { lines.push(line); line = cont; } line += tok; };
+  // keep NAME= glued to its first value so a wrap never orphans the keyword
+  parts.forEach(p => {
+    push(p.name + "=" + p.vals[0] + ",");
+    for (let i = 1; i < p.vals.length; i++) push(p.vals[i] + ",");
+  });
+  line += "$"; lines.push(line);
+  return lines.join("\n");
+}
+
+/* ---- variable specifications per form ------------------------------------ */
+function cbSpec(form) {
+  const R = (o) => Object.assign({ enabled: false, mode: "range", list: "", a: 0, b: 0, step: 1, count: 5 }, o);
+  if (form === "digital") {
+    return [
+      R({ key: "alpha", label: "Angle of attack α", unit: "deg", cls: "array", nl: "FLTCON",
+          name: "ALSCHD", count_name: "NALPHA", max: 20, ascending: true,
+          enabled: true, a: -4, b: 16, step: 2 }),
+      R({ key: "mach", label: "Mach number", unit: "", cls: "array", nl: "FLTCON",
+          name: "MACH", count_name: "NMACH", max: 20, enabled: true, mode: "list", list: "0.2, 0.4, 0.6, 0.8" }),
+      R({ key: "alt", label: "Altitude", unit: "ft", cls: "array", nl: "FLTCON",
+          name: "ALT", count_name: "NALT", max: 20, mode: "list", list: "0, 10000, 20000" }),
+      R({ key: "symflp", label: "Symmetric flap δ", unit: "deg", cls: "array", nl: "SYMFLP",
+          name: "DELTA", count_name: "NDELTA", max: 9, a: -20, b: 40, step: 10 }),
+      R({ key: "asyflp", label: "Aileron δ (antisymmetric)", unit: "deg", cls: "array", nl: "ASYFLP",
+          name: "DELTAR", mirror: "DELTAL", count_name: "NDELTA", max: 9, a: -20, b: 20, step: 10 }),
+    ];
+  }
+  return [
+    R({ key: "alpha", label: "Angle of attack α", unit: "deg", cls: "array", nl: "FLTCON",
+        name: "ALPHA", count_name: "NALPHA", max: 100, min_n: 2, enabled: true, a: -4, b: 20, step: 4 }),
+    R({ key: "mach", label: "Mach number", unit: "", cls: "array", nl: "FLTCON",
+        name: "MACH", count_name: "NMACH", max: 20, enabled: true, mode: "list", list: "0.8, 1.2, 2.0, 3.0" }),
+    R({ key: "ren", label: "Reynolds number / unit length", unit: "1/ft", cls: "array", nl: "FLTCON",
+        name: "REN", max: 20, pairMach: true, mode: "list", list: "2.0E6" }),
+    R({ key: "alt", label: "Altitude", unit: "ft", cls: "array", nl: "FLTCON",
+        name: "ALT", max: 20, pairMach: true, mode: "list", list: "0" }),
+    R({ key: "beta", label: "Sideslip β", unit: "deg", cls: "case", nl: "FLTCON",
+        name: "BETA", a: -4, b: 4, step: 2 }),
+    R({ key: "phi", label: "Aerodynamic roll φ", unit: "deg", cls: "case", nl: "FLTCON",
+        name: "PHI", a: 0, b: 90, step: 45 }),
+  ];
+}
+
+/** Deflection rows, one per fin set, appended to the missile spec. */
+function cbDeflSpec(sets) {
+  return sets.map(f => ({
+    key: "d" + f.n, label: "Fin set " + f.n + " deflection δ" + f.n, unit: "deg",
+    cls: "case", nl: "DEFLCT", name: "DELTA" + f.n, defl: true,
+    panels: f.panels, pattern: cbPattern("opp", f.panels),
+    enabled: false, mode: "range", list: "", a: -10, b: 10, step: 5, count: 5,
+  }));
+}
+/** Append the lowest unused fin set, so DELTA1..9 can be built up as needed. */
+function cbAddFinSet() {
+  const used = CB.vars.filter(v => v.defl).map(v => +v.name.slice(5));
+  for (let n = 1; n <= 9; n++)
+    if (!used.includes(n)) { CB.vars.push(cbDeflSpec([{ n, panels: 1 }])[0]); break; }
+  cbRender(); cbGenerate();
+}
+function cbPattern(kind, n) {
+  const a = [];
+  for (let i = 0; i < n; i++)
+    a.push(kind === "all" ? 1 : kind === "alt" ? (i % 2 ? -1 : 1) : (i === 0 || i === n - 1) ? 1 : -1);
+  return a;
+}
+
+/* ---- seed from the loaded deck ------------------------------------------- */
+function cbBuild() {
+  const cse = CASES[CASE_I];
+  CB.form = (FLAVOR === "digital") ? "digital" : "missile";
+  CB.vars = cbSpec(CB.form);
+  let sets = [];
+  if (CB.form === "missile") {
+    for (let n = 1; n <= 9; n++) {
+      const nl = cse && NL(cse, "FINSET" + n);
+      if (nl) sets.push({ n, panels: clamp(Math.round(num(nl, "NPANEL", 1)), 1, 8) });
+    }
+    if (!sets.length) sets = [{ n: 1, panels: 1 }];
+    CB.vars = CB.vars.concat(cbDeflSpec(sets));
+  }
+  // prefill from whatever the deck already flies
+  if (cse) {
+    const seed = (key, nlname, vname) => {
+      const v = CB.vars.find(x => x.key === key), src = NL(cse, nlname);
+      const got = src ? narr(src, vname) : [];
+      if (v && got.length) { v.mode = "list"; v.list = got.map(x => +x.toPrecision(8)).join(", "); v.enabled = true; }
+    };
+    if (CB.form === "missile") { seed("alpha", "FLTCON", "ALPHA"); seed("mach", "FLTCON", "MACH"); seed("ren", "FLTCON", "REN"); }
+    else { seed("alpha", "FLTCON", "ALSCHD"); seed("mach", "FLTCON", "MACH"); seed("alt", "FLTCON", "ALT"); }
+  }
+}
+
+/* ---- UI ------------------------------------------------------------------ */
+function cbRender() {
+  const host = document.getElementById("cbLeft");
+  host.innerHTML = "";
+  const formSel = document.createElement("div");
+  formSel.className = "cbsec";
+  formSel.textContent = "Deck form";
+  host.appendChild(formSel);
+  const fr = document.createElement("div"); fr.className = "row";
+  [["missile", "$AXIBOD / $FINSET"], ["digital", "$BODY / $SYNTHS"]].forEach(([k, lab]) => {
+    const b = document.createElement("button");
+    b.textContent = lab; if (CB.form === k) b.className = "on";
+    b.onclick = () => { CB.form = k; CB.vars = cbSpec(k);
+      if (k === "missile") CB.vars = CB.vars.concat(cbDeflSpec([{ n: 1, panels: 1 }]));
+      cbRender(); cbGenerate(); };
+    fr.appendChild(b);
+  });
+  host.appendChild(fr);
+
+  if (CB.form === "digital") {
+    const lp = document.createElement("div"); lp.className = "cbrow";
+    lp.innerHTML = `<header><b>LOOP — how Mach and altitude pair</b></header>
+      <div class="fields"><select id="cbLoop">
+        <option value="1">1 — vary altitude and Mach together</option>
+        <option value="2">2 — vary Mach at fixed altitude</option>
+        <option value="3">3 — vary altitude at fixed Mach</option></select></div>`;
+    host.appendChild(lp);
+    const sel = lp.querySelector("#cbLoop"); sel.value = String(CB.loop);
+    sel.onchange = e => { CB.loop = +e.target.value; cbGenerate(); };
+  }
+
+  const groups = [["array", "Swept inside one case"], ["case", "Each value starts a new case"]];
+  groups.forEach(([cls, title]) => {
+    const list = CB.vars.filter(v => v.cls === cls);
+    if (cls === "case")                             // fin sets last, in DELTAn order
+      list.sort((a, b) => (a.defl ? 1 : 0) - (b.defl ? 1 : 0) ||
+                          (a.defl && b.defl ? +a.name.slice(5) - +b.name.slice(5) : 0));
+    const addable = cls === "case" && CB.form === "missile";
+    if (!list.length && !addable) return;
+    const h = document.createElement("div"); h.className = "cbsec"; h.textContent = title;
+    host.appendChild(h);
+    list.forEach(v => host.appendChild(cbRow(v)));
+    if (addable) {
+      const r = document.createElement("div"); r.className = "row";
+      const b = document.createElement("button");
+      b.textContent = "+ Add fin set";
+      b.disabled = list.filter(v => v.defl).length >= 9;
+      b.onclick = cbAddFinSet;
+      r.appendChild(b); host.appendChild(r);
+    }
+  });
+}
+
+function cbRow(v) {
+  const d = document.createElement("div");
+  d.className = "cbrow" + (v.enabled ? "" : " off");
+  const tag = v.cls === "array" ? (v.name + (v.max ? " ≤" + v.max : "")) : v.name;
+  d.innerHTML = `<header><input type="checkbox" ${v.enabled ? "checked" : ""}>
+      <b>${escapeHtml(v.label)}</b>${v.unit ? ` <span class="sub">${v.unit}</span>` : ""}
+      <span class="tag">${escapeHtml(tag)}</span></header>
+    <div class="fields"></div><div class="prev"></div>`;
+  v._prevEl = d.querySelector(".prev");
+  d.querySelector("header input").onchange = e => {
+    v.enabled = e.target.checked; d.classList.toggle("off", !v.enabled); cbGenerate();
+  };
+  const f = d.querySelector(".fields");
+  const mk = (tag2, props) => { const e = document.createElement(tag2); Object.assign(e, props); return e; };
+  const modeSel = mk("select", { value: v.mode });
+  [["range", "start / stop / step"], ["count", "start / stop / count"], ["list", "list"]]
+    .forEach(([k, l]) => modeSel.appendChild(mk("option", { value: k, textContent: l })));
+  modeSel.value = v.mode;
+  modeSel.onchange = e => { v.mode = e.target.value; cbRender(); cbGenerate(); };
+  f.appendChild(modeSel);
+
+  const num2 = (label, key, cls) => {
+    f.appendChild(mk("span", { className: "sub", textContent: label }));
+    const i = mk("input", { type: "text", className: "num " + (cls || ""), value: String(v[key]) });
+    i.oninput = e => { const x = parseFloat(e.target.value); if (isFinite(x)) { v[key] = x; cbGenerate(); } };
+    f.appendChild(i);
+  };
+  if (v.mode === "list") {
+    const i = mk("input", { type: "text", className: "wide", value: v.list, placeholder: "0, 4, 8, 12" });
+    i.oninput = e => { v.list = e.target.value; cbGenerate(); };
+    f.appendChild(i);
+  } else { num2("from", "a"); num2("to", "b"); num2(v.mode === "count" ? "count" : "step", v.mode === "count" ? "count" : "step"); }
+
+  if (v.defl) {                                     // panel count + sign pattern
+    const pat = document.createElement("div"); pat.className = "pat";
+    pat.appendChild(mk("span", { textContent: "panels" }));
+    const np = mk("input", { type: "text", value: String(v.panels), title: "1 to 8 panels in this fin set" });
+    np.style.width = "40px";
+    np.onchange = e => {                            // grow or shrink, keeping set signs
+      const n = clamp(Math.round(parseFloat(e.target.value) || 1), 1, 8);
+      const old = v.pattern.slice();
+      v.panels = n; v.pattern = [];
+      for (let i = 0; i < n; i++) v.pattern.push(isNum(old[i]) ? old[i] : 1);
+      cbRender(); cbGenerate();
+    };
+    pat.appendChild(np);
+    pat.appendChild(mk("span", { textContent: "pattern" }));
+    const ps = mk("select", {});
+    [["all", "all same"], ["opp", "opposing pairs"], ["alt", "alternating"], ["custom", "custom"]]
+      .forEach(([k, l]) => ps.appendChild(mk("option", { value: k, textContent: l })));
+    ps.value = ["all", "opp", "alt"].find(k => cbPattern(k, v.panels).join() === v.pattern.join()) || "custom";
+    ps.onchange = e => { if (e.target.value !== "custom") v.pattern = cbPattern(e.target.value, v.panels); cbRender(); cbGenerate(); };
+    pat.appendChild(ps);
+    v.pattern.forEach((val, i) => {
+      const inp = mk("input", { type: "text", value: String(val), title: "panel " + (i + 1) + " sign" });
+      inp.oninput = e => { const x = parseFloat(e.target.value); if (isFinite(x)) { v.pattern[i] = x; cbGenerate(); } };
+      pat.appendChild(inp);
+    });
+    pat.appendChild(mk("span", { textContent: "× magnitude" }));
+    d.appendChild(pat);
+
+    const rm = mk("button", { textContent: "×", title: "Remove fin set " + v.name.slice(5) });
+    rm.style.cssText = "padding:0 7px;line-height:1.3;margin-left:6px";
+    rm.onclick = ev => { ev.stopPropagation(); CB.vars = CB.vars.filter(x => x !== v); cbRender(); cbGenerate(); };
+    d.querySelector("header").appendChild(rm);
+  }
+  return d;
+}
+
+/* ---- generation ---------------------------------------------------------- */
+function cbGenerate() {
+  const out = document.getElementById("cbOut"), sum = document.getElementById("cbSummary");
+  if (!out) return;
+  const errs = [], warns = [];
+  const on = CB.vars.filter(v => v.enabled);
+  on.forEach(v => { v._vals = expand(v); });
+
+  CB.vars.forEach(v => {
+    if (!v._prevEl) return;
+    if (!v.enabled) { v._prevEl.textContent = ""; return; }
+    const n = v._vals.length;
+    const shown = n > 12 ? v._vals.slice(0, 10).map(fmtF).join(", ") + ", … , " + fmtF(v._vals[n - 1])
+                         : v._vals.map(fmtF).join(", ");
+    const over = v.max && n > v.max ? `  — exceeds ${v.name} limit of ${v.max}` : "";
+    v._prevEl.textContent = `→ ${shown}   (${n} value${n === 1 ? "" : "s"}${v.cls === "case" ? ", " + n + " cases" : ""})${over}`;
+    v._prevEl.style.color = over ? "#e06c5c" : "";
+  });
+
+  const arrays = on.filter(v => v.cls === "array");
+  const caseVars = on.filter(v => v.cls === "case");
+
+  arrays.forEach(v => {
+    if (!v._vals.length) errs.push(`${v.label}: no values.`);
+    if (v.max && v._vals.length > v.max) errs.push(`${v.label}: ${v._vals.length} values exceeds the ${v.name} limit of ${v.max}.`);
+    if (v.min_n && v._vals.length < v.min_n) errs.push(`${v.label}: ${v.count_name} must be greater than 1.`);
+    if (v.ascending) {
+      const sorted = v._vals.slice().sort((a, b) => a - b);
+      if (sorted.some((x, i) => x !== v._vals[i])) { v._vals = sorted; warns.push(`${v.label}: ALSCHD must be in ascending order — the values were sorted.`); }
+    }
+  });
+  caseVars.forEach(v => { if (!v._vals.length) errs.push(`${v.label}: no values.`); });
+
+  const beta = on.find(v => v.key === "beta"), phi = on.find(v => v.key === "phi");
+  if (beta && phi) errs.push("BETA and PHI cannot be used in the same case — enable one or the other.");
+
+  if (CB.form === "missile") {
+    const mach = arrays.find(v => v.key === "mach");
+    const ren = arrays.find(v => v.key === "ren"), alt = arrays.find(v => v.key === "alt");
+    if (mach && !ren && !alt) warns.push("MACH alone does not fix the atmosphere. Add REN, or ALT, or TINF with PINF.");
+    [ren, alt].forEach(v => {
+      if (!v || !mach) return;
+      // REN/ALT pair one-to-one with MACH, so broadcast a single value across them
+      if (v._vals.length === 1 && mach._vals.length > 1)
+        v._vals = new Array(mach._vals.length).fill(v._vals[0]);
+      else if (v._vals.length !== mach._vals.length)
+        warns.push(`${v.label}: ${v._vals.length} values against ${mach._vals.length} Mach numbers — these arrays pair one-to-one with MACH.`);
+    });
+  }
+
+  // cartesian product over the case-forming variables
+  let combos = [[]];
+  caseVars.forEach(v => {
+    const next = [];
+    combos.forEach(c => v._vals.forEach(x => next.push(c.concat([x]))));
+    combos = next;
+  });
+  const nPts = (arrays.find(v => v.key === "alpha")?._vals.length || 0) *
+               (arrays.find(v => v.key === "mach")?._vals.length || 0);
+
+  const nlNames = new Set();
+  arrays.concat(caseVars).forEach(v => nlNames.add(v.nl));
+  const nlTotal = combos.length * Math.max(1, nlNames.size);
+  if (CB.form === "missile" && nlTotal > 300)
+    warns.push(`${combos.length} cases x ${nlNames.size} namelists = ${nlTotal} reads: with SAVE in effect DATCOM reads at most 300 namelists in a run, so this will overflow. Split it into separate files, or untick "repeat every variable".`);
+
+  sum.innerHTML = `<b>${combos.length}</b> case${combos.length === 1 ? "" : "s"}` +
+    (nPts ? ` · <b>${nPts}</b> α×Mach points each · <b>${combos.length * nPts}</b> total` : "");
+
+  if (errs.length) {
+    out.textContent = "Cannot generate:\n\n" + errs.map(e => "  • " + e).join("\n") +
+      (warns.length ? "\n\nAlso:\n" + warns.map(w => "  • " + w).join("\n") : "");
+    return;
+  }
+
+  const L = [];
+  L.push("*  DATCOM case sweep — generated by datcomViz");
+  L.push("*  Paste below an existing deck. The case before this block must define");
+  L.push("*  the geometry" + (CB.form === "missile"
+    ? " and end with a SAVE card so these cases inherit it." : "."));
+  if (CB.repeat) L.push("*  Every case restates all swept variables, so each stands on its own.");
+  L.push("*");
+  L.push(`*  ${combos.length} case(s)` + (nPts ? `, ${nPts} alpha x Mach points each` : ""));
+  warns.forEach(w => L.push("*  NOTE: " + w));
+  L.push("*");
+
+  const prev = {};
+  const useSave = CB.form === "missile";     // BODY/SYNTHS decks retain inputs on their own
+  combos.forEach((combo, ci) => {
+    // One path for every case: build the complete set of sweep namelists, so
+    // each case stands on its own for everything being swept. Only the vehicle
+    // is inherited, via SAVE.
+    const parts = {};                                // namelist -> [{name, vals}]
+    const add = (nl, name, vals) => { (parts[nl] = parts[nl] || []).push({ name, vals }); };
+
+    arrays.forEach(v => {
+      if (v.count_name) add(v.nl, v.count_name, [fmtF(v._vals.length)]);
+      add(v.nl, v.name, collapse(v._vals));
+      if (v.mirror) add(v.nl, v.mirror, collapse(v._vals.map(x => -x)));
+    });
+    if (CB.form === "digital") add("FLTCON", "LOOP", [fmtF(CB.loop)]);
+    caseVars.forEach((v, i) => {
+      add(v.nl, v.name, v.defl ? v.pattern.map(pv => fmtF(pv * combo[i])) : [fmtF(combo[i])]);
+    });
+
+    // compact mode drops any assignment identical to the previous case
+    if (!CB.repeat) Object.keys(parts).forEach(nl => {
+      parts[nl] = parts[nl].filter(pt => {
+        const k = nl + "." + pt.name, txt = pt.vals.join(",");
+        if (prev[k] === txt) return false;
+        prev[k] = txt; return true;
+      });
+    });
+
+    const label = caseVars.map((v, i) => `${v.name}=${fmtF(combo[i])}`).join(" ");
+    L.push(`CASEID ${ci + 1}/${combos.length}${label ? "  " + label : ""}`);
+    ["FLTCON", "REFQ", "DEFLCT", "SYMFLP", "ASYFLP"].forEach(nl => {
+      if (parts[nl] && parts[nl].length) L.push(nlBlock(nl, parts[nl]));
+    });
+    if (ci < combos.length - 1) { if (useSave) L.push("SAVE"); L.push("NEXT CASE"); }
+  });
+  out.textContent = L.join("\n") + "\n";
+}
+
+/* ---- wiring -------------------------------------------------------------- */
+function cbShow(which) {
+  const g = which === "geom";
+  document.getElementById("geomPane").classList.toggle("off", !g);
+  document.getElementById("casePane").classList.toggle("on", !g);
+  document.getElementById("tab-geom").classList.toggle("on", g);
+  document.getElementById("tab-case").classList.toggle("on", !g);
+  if (!g && !CB.vars.length) { cbBuild(); cbRender(); }
+  if (!g) cbGenerate();
+}
+document.getElementById("tab-geom").onclick = () => cbShow("geom");
+document.getElementById("tab-case").onclick = () => cbShow("case");
+document.getElementById("cbRepeat").onchange = e => { CB.repeat = e.target.checked; cbGenerate(); };
+document.getElementById("cbCopy").onclick = () => {
+  const t = document.getElementById("cbOut").textContent;
+  navigator.clipboard.writeText(t).then(() => {
+    const b = document.getElementById("cbCopy"); const o = b.textContent;
+    b.textContent = "Copied"; setTimeout(() => { b.textContent = o; }, 1200);
+  });
+};
+document.getElementById("cbDl").onclick = () => {
+  const blob = new Blob([document.getElementById("cbOut").textContent], { type: "text/plain" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "datcom-cases.dat"; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+};
+
 /* ---------- notes panel --------------------------------------------------- */
 document.getElementById("about").innerHTML = `
 <div class="msg info">This is a <b>view-only</b> tool. It parses an input deck and draws the
-geometry it describes. It does not run DATCOM, read output files, or write anything.</div>
+geometry it describes. It does not run DATCOM, read output files, or write anything. The
+<b>Cases</b> tab generates sweep text to paste into a deck; it does not run anything either.</div>
 <p class="sub"><b>Covered — <code>AXIBOD</code>/<code>FINSET</code> decks:</b>
 <code>AXIBOD</code> and <code>ELLBOD</code>
 (option 1 nose/centrebody/afterbody with CONE, OGIVE, POWER, HAACK and KARMAN shapes,

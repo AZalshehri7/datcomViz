@@ -30,6 +30,34 @@ or write anything.
   deck does not draw the way you expected.
 - Save PNG writes the current view to a file.
 
+## Case builder
+
+The **Cases** tab turns a set of sweeps into DATCOM case text. Pick the variables you
+want, give each a list or a start/stop/step, and it emits the `NEXT CASE` chain to paste
+under an existing deck. It generates text only — it does not run anything.
+
+What matters is that sweeping a variable does not cost the same everywhere. In an
+`AXIBOD`/`FINSET` deck `ALPHA` is an array of up to 100 and `MACH` up to 20, so a whole
+alpha-Mach matrix runs inside a single case; but `BETA`, `PHI` and the `DEFLCT`
+deflections are scalars, so each value of those starts a new case. The builder splits the
+variables into those two groups on screen and multiplies out the second group for you.
+
+Fin deflections are entered as a **per-panel sign pattern times a swept magnitude**, which
+is how these decks are normally written — a pattern of `+1,-1,-1,+1` with a magnitude
+sweep of -10 to +10 gives `DELTA1=-10.,10.,10.,-10.` and so on. Start with one fin set of
+one panel and add sets and panels as the configuration needs them; a loaded deck fills in
+its own fin sets and their real `NPANEL` counts automatically.
+
+By default every case restates all of the swept namelists, so each case stands on its own
+and a mis-ordered `SAVE` cannot silently carry a stale deflection forward. Only the
+geometry is inherited. Untick *Repeat every variable in each case* to emit just what
+changed between consecutive cases, which produces a much shorter file.
+
+It enforces the rules the manual states: `BETA` and `PHI` cannot appear in the same case,
+`NALPHA` must be greater than 1, the array size limits per variable, `ALSCHD` must be
+ascending, `REN`/`ALT` pair one-to-one with `MACH` (a single value is broadcast), and with
+`SAVE` in effect a run reads at most 300 namelists.
+
 ## Coverage
 
 Built against the 2011 revision of the user's manual and the input namelist reference,
