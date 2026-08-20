@@ -2744,6 +2744,12 @@ function cbGenerate() {
     if (alphaV._vals.some(a => a < -1e-9))
       warns.push(`this sweep pairs a non-zero BETA with negative alpha. Total angle of attack is always positive, so negative alpha has to be carried as a roll angle past 90 degrees, which a single arctangent cannot recover; expect wrong signs or NaN. Run those points as ALPHA with PHI instead.`);
   }
+  // At zero total incidence the roll angle has no meaning, so an ALPHA of 0
+  // is the same flight condition in every PHI case.
+  const phiV = on.find(v => v.key === "phi");
+  if (phiV && alphaV && phiV._vals.length > 1 && alphaV._vals.some(a => Math.abs(a) < 1e-9))
+    warns.push(`ALPHA includes 0. With PHI non-zero the code reads ALPHA as total angle of attack, and at zero incidence the roll angle means nothing, so that point is the same condition in all ${phiV._vals.length} cases — ${phiV._vals.length - 1} of those runs are redundant. Drop 0 from the schedule to avoid repeating it.`);
+
   // "Missile Datcom will not run if two or more identical ALPHA values are defined"
   if (alphaV) {
     const seen = new Set(), dup = new Set();
