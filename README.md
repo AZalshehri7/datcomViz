@@ -2,6 +2,8 @@
 
 A browser-based **geometry viewer** for DATCOM input decks.
 
+**<https://datcom.aero-dev.com>**
+
 Open `index.html` in a browser — that's it. No build step, no server, no network. The
 page loads `vendor/three.min.js` from disk, so it works offline and nothing you drop on
 it ever leaves the machine.

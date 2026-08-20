@@ -1,4 +1,5 @@
 <!DOCTYPE html>
+<!-- datcomViz — https://datcom.aero-dev.com -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -133,6 +134,10 @@
   .cbsec{font-size:10.5px;text-transform:uppercase;letter-spacing:.9px;color:var(--dim);
     margin:14px 0 7px}
   .cbsec:first-child{margin-top:0}
+  button.formbtn{display:flex;flex-direction:column;align-items:flex-start;gap:1px;
+    padding:5px 10px;line-height:1.25}
+  button.formbtn span{font-size:9.5px;letter-spacing:.4px;opacity:.65;
+    font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
   #cbSummary{font-size:11.5px;color:var(--dim);margin-right:auto}
   #cbSummary b{color:var(--fg);font-variant-numeric:tabular-nums}
 </style>
@@ -250,7 +255,10 @@
 <script>
 "use strict";
 /* =======================================================================
-   datcomViz — geometry visualiser for DATCOM input decks.  View-only: nothing is written, nothing leaves the browser.
+   datcomViz — geometry visualiser for DATCOM input decks.
+   https://datcom.aero-dev.com          source: github.com/AZalshehri7/datcomViz
+
+   View-only: nothing is written, nothing leaves the browser.
 
    Conventions implemented (per the 2011 revision of the user's manual,
    Figures 2, 3, 7, 9, 11, 13, and the input namelist reference):
@@ -1884,8 +1892,8 @@ function loadText(text, name) {
 function renderTitle(cse) {
   const t = document.getElementById("title");
   // identify the deck by the namelist family it uses, not by which code it targets
-  const flav = FLAVOR === "missile" ? "$AXIBOD / $FINSET deck"
-             : FLAVOR === "digital" ? "$BODY / $SYNTHS deck" : "unrecognised deck";
+  const flav = FLAVOR === "missile" ? "body + fin sets · $AXIBOD"
+             : FLAVOR === "digital" ? "fuselage + wing/tail · $BODY" : "unrecognised deck";
   t.innerHTML = `<b>${escapeHtml(cse.title || DECK?.name || "")}</b>
     <span>${flav}${cse.units ? " · units: " + cse.units : ""}</span>`;
 }
@@ -2213,9 +2221,11 @@ function cbRender() {
   formSel.textContent = "Deck form";
   host.appendChild(formSel);
   const fr = document.createElement("div"); fr.className = "row";
-  [["missile", "$AXIBOD / $FINSET"], ["digital", "$BODY / $SYNTHS"]].forEach(([k, lab]) => {
+  [["missile", "Body + fin sets", "$AXIBOD · $FINSET"],
+   ["digital", "Fuselage + wing/tail", "$BODY · $SYNTHS"]].forEach(([k, lab, nls]) => {
     const b = document.createElement("button");
-    b.textContent = lab; if (CB.form === k) b.className = "on";
+    b.className = "formbtn" + (CB.form === k ? " on" : "");
+    b.innerHTML = `${escapeHtml(lab)}<span>${escapeHtml(nls)}</span>`;
     b.onclick = () => { CB.form = k; CB.vars = cbSpec(k);
       if (k === "missile") CB.vars = CB.vars.concat(cbDeflSpec([{ n: 1, panels: 1 }]));
       cbRender(); cbGenerate(); };
