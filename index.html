@@ -171,13 +171,6 @@
           <button id="ctrClr" style="display:none">Clear contour</button>
         </div>
         <input type="file" id="ctrFile" hidden>
-        <div style="margin-top:9px">
-          <div class="sub" style="margin-bottom:3px">DATCOM release (sets the limits used)</div>
-          <select id="relSel">
-            <option value="old">Rev 5/97 — 1997 manual</option>
-            <option value="new">Rev 3/11 — 2011 manual</option>
-          </select>
-        </div>
         <div id="caseWrap" style="display:none;margin-top:9px">
           <div class="sub" style="margin-bottom:3px">Case</div>
           <select id="caseSel"></select>
@@ -283,8 +276,9 @@
 
    View-only: nothing is written, nothing leaves the browser.
 
-   Conventions implemented (per the 2011 revision of the user's manual,
-   Figures 2, 3, 7, 9, 11, 13, and the input namelist reference):
+   Conventions implemented per the 1997 manual, AFRL-VA-WP-TR-1998-3009,
+   documenting Missile Datcom Rev 5/97 — Figures 1, 6, 8, 9 and 10, the sign
+   note under namelist DEFLCT, and the input namelist reference:
      * body axes  : +X aft (nose to tail), +Y starboard, +Z up
      * PHIF / PHI : measured clockwise from top vertical centre, looking
                     forward from behind the missile  =>  unit vector
@@ -301,20 +295,11 @@
 
 const D2R = Math.PI / 180, R2D = 180 / Math.PI;
 
-/* Limits and behaviour differ by release. The 1997 manual (Rev 5/97) and the
-   2011 revision (Rev 3/11) disagree on several things that decide whether a
-   deck is valid at all, so the tool has to be told which one you run. */
-const RELEASES = {
-  old: { id: "old", label: "Rev 5/97", manual: "1997 manual",
-         alphaMax: 20, finSets: 4, betaPhiFatal: false, orderFatal: true,
-         hasNVOR: false, hasBodyCamber: false, hasNINCR: false, hasConicCentre: false,
-         betaDef: "tan\u207B\u00B9(v/u)" },
-  new: { id: "new", label: "Rev 3/11", manual: "2011 manual",
-         alphaMax: 100, finSets: 9, betaPhiFatal: true, orderFatal: false,
-         hasNVOR: true, hasBodyCamber: true, hasNINCR: true, hasConicCentre: true,
-         betaDef: "sin\u207B\u00B9(v/V\u2080)" },
-};
-let REL = RELEASES.old, REL_LOCKED = false, RELNOTE = "";
+/* Limits taken from the 1997 manual, AFRL-VA-WP-TR-1998-3009, which documents
+   Missile Datcom Rev 5/97. Later releases raise several of these — ALPHA to 100
+   and fin sets to 9 — so a deck written for a newer build can exceed them. */
+const ALPHA_MAX = 20;          // Table 3: ALPHA array size
+const FINSET_MAX = 4;          // "up to four non-overlapping fin sets"
 const isNum = v => typeof v === "number" && isFinite(v);
 const fmt = (v, d = 3) => (isNum(v) ? (Math.abs(v) >= 1e5 || (v !== 0 && Math.abs(v) < 1e-3)
   ? v.toExponential(2) : (+v.toFixed(d)).toString()) : "—");
@@ -774,6 +759,21 @@ function buildMissileBody(cse, warn) {
   return { stations, elliptical, dexit, x0: X0, source: elliptical ? "ELLBOD" : "AXIBOD" };
 }
 
+/**
+ * Mould-line radius at an axial station, along a panel's roll angle. On a
+ * circular body this is just the radius; on an elliptical one it varies with
+ * roll, so a fin set whose panels sit at different PHIF meets it at different
+ * radii. Solves (r sin/w)^2 + (r cos/h)^2 = 1 for r.
+ */
+function bodyRadiusAt(body, x, phiDeg) {
+  const st = bodyAt(body, x);
+  const w = st.w, h = isNum(st.h) ? st.h : st.w;
+  if (!(w > 0) || !(h > 0)) return w || 0;
+  if (Math.abs(w - h) < 1e-12) return w;
+  const sn = Math.sin(phiDeg * D2R), cs = Math.cos(phiDeg * D2R);
+  return 1 / Math.sqrt((sn / w) ** 2 + (cs / h) ** 2);
+}
+
 /** Semi-width / semi-height of the body at an axial station. */
 function bodyAt(body, x) {
   if (!body || !body.stations.length) return { w: 0, h: 0, zc: 0 };
@@ -815,11 +815,13 @@ function buildFinSet(cse, n, body, warn) {
   }
 
   // ---- SSPAN(1)=0 : place the root on the body mould line ----------------
-  let rootOnBody = false;
+  // The code seats the panel so the centre of its root chord lies on the mould
+  // line. On an elliptical body that radius depends on where the panel sits
+  // around the section, so the offset is resolved per panel at draw time and
+  // sspan is left as the relative data the deck supplied.
+  let rootOnBody = false, seatX = 0;
   if (Math.abs(sspan[0]) < 1e-12 && body) {
-    const xMid = X0 + xle[0] + ch[0] / 2;
-    const r = bodyAt(body, xMid).w;
-    for (let i = 0; i < k; i++) sspan[i] += r;
+    seatX = X0 + xle[0] + ch[0] / 2;
     rootOnBody = true;
   }
 
@@ -872,7 +874,7 @@ function buildFinSet(cse, n, body, warn) {
 
   const cfoc = narr(nl, "CFOC");
   return { n, sspan, chord: ch, xle: xle.map(v => v + X0), sections, phis, gams, delta,
-           xhinge, skew, secTyp, rootOnBody, cfoc,
+           xhinge, skew, secTyp, rootOnBody, seatX, body, cfoc,
            nvor: num(nl, "NVOR", 1) };
 }
 
@@ -1239,7 +1241,10 @@ function buildMissileModel(cse, warn, opts) {
     fs.phis.forEach((phi, p) => {
       const gam = fs.gams[p] || 0;
       const sDir = radialDir(phi + gam), tDir = tangDir(phi + gam);
-      const anchor = radialDir(phi).multiplyScalar(fs.sspan[0]);
+      // an auto-seated panel meets the mould line at its own roll angle, which
+      // differs per panel on an elliptical section
+      const seat = fs.rootOnBody ? bodyRadiusAt(fs.body, fs.seatX, phi + gam) : 0;
+      const anchor = radialDir(phi).multiplyScalar(fs.sspan[0] + seat);
       const stations = [];
       for (let i = 0; i < k; i++) {
         const org = anchor.clone().add(sDir.clone().multiplyScalar(fs.sspan[i] - fs.sspan[0]));
@@ -1294,6 +1299,13 @@ function buildMissileModel(cse, warn, opts) {
       HINGES.push([pivot, pivot.clone().add(axis.clone().multiplyScalar(fs.sspan[k - 1] - fs.sspan[0]))]);
     });
 
+    // Reported spans include the seat offset. On an elliptical section it
+    // differs per panel, so quote the mean and say so.
+    const seats = fs.phis.map((phi, i) =>
+      fs.rootOnBody ? bodyRadiusAt(fs.body, fs.seatX, phi + (fs.gams[i] || 0)) : 0);
+    const seatMean = seats.reduce((a2, b2) => a2 + b2, 0) / (seats.length || 1);
+    const seatVaries = (Math.max(...seats) - Math.min(...seats)) > 1e-9;
+
     // planform statistics (exposed panel, one side)
     let area = 0, macNum = 0, macDen = 0, xleMac = 0;
     for (let i = 0; i < k - 1; i++) {
@@ -1315,7 +1327,8 @@ function buildMissileModel(cse, warn, opts) {
       "Tip chord": fs.chord[k - 1],
       "Taper ratio": fs.chord[0] > 0 ? fs.chord[k - 1] / fs.chord[0] : NaN,
       "Exposed semispan": semi,
-      "Total span": 2 * fs.sspan[k - 1],
+      "Total span": 2 * (fs.sspan[k - 1] + seatMean),
+      "Root seated at radius": fs.rootOnBody ? (seatVaries ? `${fmt(Math.min(...seats))} → ${fmt(Math.max(...seats))} by panel` : fmt(seatMean)) : "as given",
       "Exposed area (1 panel)": area,
       "Panel aspect ratio": area > 0 ? (semi * semi) / area : NaN,
       "LE sweep": leSweep,
@@ -1374,11 +1387,15 @@ function missileGeomChecks(cse, body, fins, warn) {
 
     // 2. root radius against the mould line, unless the code placed it itself
     if (!fs.rootOnBody && xMid >= x0 && xMid <= x1) {
-      const rBody = bodyAt(body, xMid).w, gap = fs.sspan[0] - rBody;
-      if (gap < -tol)
-        chk(`Fin set ${n}: SSPAN(1)=${fmt(fs.sspan[0])} is inside the body, whose radius at the root mid-chord is ${fmt(rBody)} — the fin root is buried by ${fmt(-gap)}. DATCOM does not check this.`);
-      else if (gap > tol)
-        chk(`Fin set ${n}: SSPAN(1)=${fmt(fs.sspan[0])} stands ${fmt(gap)} off the body, whose radius at the root mid-chord is ${fmt(rBody)} — the fin floats. Use SSPAN(1)=0 to have the code seat it.`);
+      // on an elliptical body each panel meets the mould line at its own radius
+      const radii = fs.phis.map((phi, i) => bodyRadiusAt(body, xMid, phi + (fs.gams[i] || 0)));
+      const rMin = Math.min(...radii), rMaxP = Math.max(...radii);
+      const spread = (rMaxP - rMin > tol)
+        ? ` (the section is elliptical, so its panels meet it between ${fmt(rMin)} and ${fmt(rMaxP)})` : "";
+      if (fs.sspan[0] < rMin - tol)
+        chk(`Fin set ${n}: SSPAN(1)=${fmt(fs.sspan[0])} is inside the body, whose radius at the root mid-chord is ${fmt(rMin)}${spread} — the fin root is buried by ${fmt(rMin - fs.sspan[0])}. DATCOM does not check this.`);
+      else if (fs.sspan[0] > rMaxP + tol)
+        chk(`Fin set ${n}: SSPAN(1)=${fmt(fs.sspan[0])} stands ${fmt(fs.sspan[0] - rMaxP)} off the body, whose radius at the root mid-chord is ${fmt(rMaxP)}${spread} — the fin floats. Use SSPAN(1)=0 to have the code seat it.`);
     }
 
     // 3. a root chord over a tapering section cannot sit flush along its length
@@ -1390,25 +1407,24 @@ function missileGeomChecks(cse, body, fins, warn) {
   });
 
   // --- features the running release may not have ---------------------------
-  const maxSet = REL.finSets;
   fins.forEach(f => {
-    if (f.n > maxSet)
-      chk(`FINSET${f.n} is beyond the ${maxSet} fin sets ${REL.label} allows (${REL.manual}).`);
+    if (f.n > FINSET_MAX)
+      chk(`FINSET${f.n} is beyond the ${FINSET_MAX} non-overlapping fin sets the code allows.`);
   });
   const bodyNl = NL(cse, "AXIBOD") || NL(cse, "ELLBOD");
-  if (!REL.hasBodyCamber && bodyNl && narr(bodyNl, "Z").some(v => v))
-    chk(`The body Z camber array is not available in ${REL.label}; it was added in the 1/06 release, so this centreline offset will be ignored by the code even though it is drawn here.`);
-  if (!REL.hasConicCentre && bodyNl) {
+  if (bodyNl && narr(bodyNl, "Z").some(v => v))
+    chk(`The body Z camber array does not exist in this release — it arrived in 1/06 — so the centreline offset is drawn here but will be ignored by the code.`);
+  if (bodyNl) {
     const dn = num(bodyNl, "DNOSE", NaN), dc = num(bodyNl, "DCENTR", NaN);
     if (isNum(dn) && isNum(dc) && Math.abs(dn - dc) > 1e-9)
-      chk(`DCENTR differs from DNOSE, making the centrebody conic. ${REL.label} cannot handle conic centrebodies; support arrived in the 1/06 release.`);
+      chk(`DCENTR differs from DNOSE, making the centrebody conic. This release cannot handle conic centrebodies; support arrived in 1/06.`);
   }
-  if (!REL.hasNVOR) fins.forEach(f => {
+  fins.forEach(f => {
     if (NL(cse, "FINSET" + f.n) && isNum(num(NL(cse, "FINSET" + f.n), "NVOR", NaN)))
-      chk(`FINSET${f.n} sets NVOR, which ${REL.label} does not have — it was added in the 3/11 release and will be rejected or ignored.`);
+      chk(`FINSET${f.n} sets NVOR, which does not exist in this release — it arrived in 3/11 — so it will be rejected or ignored.`);
   });
-  if (!REL.hasNINCR && NL(cse, "TRIM") && isNum(num(NL(cse, "TRIM"), "NINCR", NaN)))
-    chk(`$TRIM sets NINCR, which ${REL.label} does not have — it was added in the 3/11 release.`);
+  if (NL(cse, "TRIM") && isNum(num(NL(cse, "TRIM"), "NINCR", NaN)))
+    chk(`$TRIM sets NINCR, which does not exist in this release — it arrived in 3/11.`);
 
   // --- protuberances: the arrays must actually cover what NPROT declares ---
   const pr = NL(cse, "PROTUB");
@@ -1481,9 +1497,7 @@ function missileGeomChecks(cse, body, fins, warn) {
     const aTE = Math.max(...a.xle.map((x, j) => x + a.chord[j]));
     const bLE = Math.min(...b.xle);
     if (bLE < Math.min(...a.xle))
-      chk(REL.orderFatal
-        ? `Fin set ${b.n} lies ahead of fin set ${a.n}. ${REL.manual} requires fin sets to be numbered sequentially front to back and to be non-overlapping, so this is an input error rather than a preference.`
-        : `Fin set ${b.n} lies ahead of fin set ${a.n}. Fin sets should be numbered front to back, and vortices are only tracked from a lower-numbered set to a higher one.`);
+      chk(`Fin set ${b.n} lies ahead of fin set ${a.n}. Fin sets must be numbered sequentially front to back and must not overlap, so this is an input error rather than a preference.`);
     else if (bLE <= aTE + tol)
       chk(`Fin sets ${a.n} and ${b.n} have no positive longitudinal gap (set ${a.n} ends at x=${fmt(aTE)}, set ${b.n} starts at x=${fmt(bLE)}), so the code will not track vortices between them.`);
   }
@@ -2020,7 +2034,6 @@ function rebuild() {
   const cse = CASES[CASE_I];
   if (!cse) return;
   WARNINGS = []; CHECKS = [];
-  if (RELNOTE) WARNINGS.push(RELNOTE);
   const warn = m => { if (!WARNINGS.includes(m)) WARNINGS.push(m); };
   clearModel();
   FLAVOR = detectFlavor(cse);
@@ -2065,8 +2078,6 @@ function loadText(text, name) {
     sel.appendChild(o);
   });
   document.getElementById("caseWrap").style.display = CASES.length > 1 ? "" : "none";
-  RELNOTE = "";
-  relAutoBump(CASES[0]);
   syncFlapPicker(CASES[0], true);
   rebuild();
   fitView();
@@ -2219,40 +2230,6 @@ drop.addEventListener("drop", e => { const f = e.dataTransfer.files[0]; if (f) r
 document.addEventListener("dragover", e => e.preventDefault());
 document.addEventListener("drop", e => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) readFile(f); });
 function readFile(f) { const r = new FileReader(); r.onload = () => loadText(r.result, f.name); r.readAsText(f); }
-
-const relSel = document.getElementById("relSel");
-try { const r = localStorage.getItem("datcomviz.release"); if (RELEASES[r]) REL = RELEASES[r]; } catch (e) {}
-relSel.value = REL.id;
-relSel.onchange = e => {
-  REL = RELEASES[e.target.value] || RELEASES.old;
-  REL_LOCKED = true; RELNOTE = "";
-  try { localStorage.setItem("datcomviz.release", REL.id); } catch (e2) {}
-  const a = CB.vars.find(v => v.key === "alpha");
-  if (a) a.max = REL.alphaMax;
-  if (CASES.length) rebuild();
-  if (CB.vars.length) { cbRender(); cbGenerate(); }
-};
-
-/** A deck using something only a later release has tells us which one to assume.
-    Runs once when a deck is loaded, and never overrides an explicit choice. */
-function relAutoBump(cse) {
-  if (REL_LOCKED || REL.id !== "old" || !cse) return;
-  const why = [];
-  for (let n = 5; n <= 9; n++) if (NL(cse, "FINSET" + n)) { why.push("FINSET" + n); break; }
-  for (let n = 1; n <= 9; n++) {
-    const f = NL(cse, "FINSET" + n);
-    if (f && isNum(num(f, "NVOR", NaN))) { why.push("NVOR"); break; }
-  }
-  const b = NL(cse, "AXIBOD") || NL(cse, "ELLBOD");
-  if (b && narr(b, "Z").some(v => v)) why.push("body Z camber");
-  if (NL(cse, "TRIM") && isNum(num(NL(cse, "TRIM"), "NINCR", NaN))) why.push("NINCR");
-  if (!why.length) return;
-  REL = RELEASES.new; relSel.value = "new";
-  try { localStorage.setItem("datcomviz.release", "new"); } catch (e) {}
-  const a = CB.vars.find(v => v.key === "alpha");
-  if (a) a.max = REL.alphaMax;
-  RELNOTE = `This deck uses ${why.join(", ")}, which only exists from a later release, so the limits were switched to ${REL.label}. Change it back in the sidebar if you run an older build.`;
-}
 
 const ctrFile = document.getElementById("ctrFile");
 document.getElementById("ctrBtn").onclick = () => ctrFile.click();
@@ -2473,7 +2450,7 @@ function cbSpec(form) {
   }
   return [
     R({ key: "alpha", label: "Angle of attack α", unit: "deg", cls: "array", nl: "FLTCON",
-        name: "ALPHA", count_name: "NALPHA", max: REL.alphaMax, min_n: 2, enabled: true, a: -4, b: 20, step: 4 }),
+        name: "ALPHA", count_name: "NALPHA", max: ALPHA_MAX, min_n: 2, enabled: true, a: -4, b: 20, step: 4 }),
     R({ key: "mach", label: "Mach number", unit: "", cls: "array", nl: "FLTCON",
         name: "MACH", count_name: "NMACH", max: 20, enabled: true, mode: "list", list: "0.8, 1.2, 2.0, 3.0" }),
     R({ key: "ren", label: "Reynolds number / unit length", unit: "1/ft", cls: "array", nl: "FLTCON",
@@ -2756,8 +2733,7 @@ function cbGenerate() {
   const beta = on.find(v => v.key === "beta"), phi = on.find(v => v.key === "phi");
   if (beta && phi) {
     // 3/11 stops the run; 5/97 simply ignores BETA when PHI is non-zero
-    if (REL.betaPhiFatal) errs.push(`BETA and PHI cannot be used in the same case — ${REL.label} treats that as an error and stops. Enable one or the other.`);
-    else warns.push(`both BETA and PHI are enabled. ${REL.label} allows this but ignores BETA whenever PHI is non-zero, so the sideslip sweep will have no effect.`);
+    warns.push("both BETA and PHI are enabled. The code accepts that but ignores BETA whenever PHI is non-zero, so the sideslip sweep will have no effect.");
   }
   // The (alpha, beta) to (alpha_T, phi) conversion divides by a function of
   // alpha, so zero or negative alpha with non-zero sideslip is degenerate.

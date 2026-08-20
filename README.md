@@ -33,24 +33,14 @@ or write anything.
   deck does not draw the way you expected.
 - Save PNG writes the current view to a file.
 
-## DATCOM release
+## Which DATCOM this targets
 
-Limits and behaviour differ between releases, and a deck that is valid for one is not
-necessarily valid for another. Pick yours in the sidebar; the choice is remembered, and a
-deck using something only a later release has switches it automatically and says so.
-
-| | Rev 5/97 (1997 manual) | Rev 3/11 (2011 manual) |
-|---|---|---|
-| `ALPHA` per case | 20 | 100 |
-| Fin sets | **4**, non-overlapping, numbering front-to-back required | 9, ordering advisory |
-| `ALPHA` + `BETA` + `PHI` together | allowed; `BETA` ignored when `PHI` is non-zero | error, stops the code |
-| β defined as | tan⁻¹(v/u) | sin⁻¹(v/V₀) |
-| `NVOR` shed vortices | — | yes |
-| Body `Z` camber, conic centrebody | — | yes (from 1/06) |
-| `NINCR` in `$TRIM` | — | yes |
-
-Because the β definition changed, the same `BETA` value means slightly different flow
-between releases, and the conversion to total angle of attack differs with it.
+Built against the **1997 manual**, AFRL-VA-WP-TR-1998-3009, which documents **Missile
+Datcom Rev 5/97**, and the Digital DATCOM input namelist reference. The limits enforced
+are that release's: `ALPHA` up to 20 per case, four non-overlapping fin sets numbered
+front to back, and no `NVOR`, body `Z` camber, conic centrebody or `NINCR`. Later releases
+raise some of these, so a deck written for a newer build may trip a check here — the
+message says which release the feature arrived in.
 
 ## Geometry checks
 
@@ -65,6 +55,9 @@ checks:
   root mid-chord — the same station the code uses when `SSPAN(1)=0` seats a fin for you;
 - a root chord running past the base, or ahead of the nose;
 - a root chord over a tapering section, where it cannot lie flush along its whole length;
+- on an elliptical section the mould line varies with roll, so each panel is measured
+  against the radius at its own `PHIF` (plus `GAM`) rather than the semi-width, and
+  `SSPAN(1)=0` seats each panel individually;
 - fin sets out of front-to-back order, or with no positive longitudinal gap, either of
   which silently stops fin-shed vortices being tracked between them.
 
@@ -99,7 +92,7 @@ want, give each a list or a start/stop/step, and it emits the `NEXT CASE` chain 
 under an existing deck. It generates text only — it does not run anything.
 
 What matters is that sweeping a variable does not cost the same everywhere. In an
-`AXIBOD`/`FINSET` deck `ALPHA` is an array of up to 100 and `MACH` up to 20, so a whole
+`AXIBOD`/`FINSET` deck `ALPHA` is an array of up to 20 and `MACH` up to 20, so a whole
 alpha-Mach matrix runs inside a single case; but `BETA`, `PHI` and the `DEFLCT`
 deflections are scalars, so each value of those starts a new case. The builder splits the
 variables into those two groups on screen and multiplies out the second group for you.
@@ -126,16 +119,16 @@ angle of attack is always positive. Both are flagged, with the suggestion to run
 points as `ALPHA` = total angle of attack together with `PHI`. It also refuses a schedule
 containing duplicate `ALPHA` values, which DATCOM will not run.
 
-It enforces the rules the manual states: `BETA` and `PHI` cannot appear in the same case,
-`NALPHA` must be greater than 1, the array size limits per variable, `ALSCHD` must be
-ascending, `REN`/`ALT` pair one-to-one with `MACH` (a single value is broadcast), and with
-`SAVE` in effect a run reads at most 300 namelists.
+It enforces the rules the manual states: `NALPHA` must be greater than 1, the array size
+limits per variable, `ALSCHD` must be ascending, `REN`/`ALT` pair one-to-one with `MACH`
+(a single value is broadcast), and with `SAVE` in effect a run reads at most 300
+namelists. Enabling both `BETA` and `PHI` is allowed but noted, since the code ignores
+`BETA` whenever `PHI` is non-zero.
 
 ## Coverage
 
-Built against the 2011 revision of the user's manual and the input namelist reference,
-not just a couple of example decks — so options that a typical deck never exercises are
-handled too.
+Built against the manuals rather than a couple of example decks, so options that a typical
+deck never exercises are handled too.
 
 **Decks built on `AXIBOD`/`ELLBOD` and `FINSET`n**
 
@@ -178,7 +171,9 @@ shipped with the tool; supply your own.
 
 ## Conventions implemented
 
-Taken from Figures 2, 3, 7, 9, 11 and 13 of the 2011 revision of the user's manual:
+Taken from the 1997 manual — Figure 1 (body geometry), Figure 6 (fin break points),
+Figure 8 (fin numbering and orientation), Figure 9 (roll attitude), Figure 10 (HEX and ARC
+airfoils), and the sign note under namelist `DEFLCT`:
 
 - Body axes: **+X aft**, **+Y starboard**, **+Z up**.
 - `PHIF` is measured clockwise from top vertical centre looking forward from behind, so a
