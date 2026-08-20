@@ -162,6 +162,11 @@
           entirely in the browser — nothing is uploaded or sent anywhere, and the page
           keeps working with the network off. Your Cases tab settings are saved in this
           browser so a sweep survives a reload; the deck itself is never saved.</div>
+        <div class="row">
+          <button id="ctrBtn" title="Overlay the body contour DATCOM writes to tape 9 with PRINT GEOM BODY or PART">Overlay for009 contour</button>
+          <button id="ctrClr" style="display:none">Clear contour</button>
+        </div>
+        <input type="file" id="ctrFile" hidden>
         <div id="caseWrap" style="display:none;margin-top:9px">
           <div class="sub" style="margin-bottom:3px">Case</div>
           <select id="caseSel"></select>
@@ -1116,7 +1121,7 @@ const MATS = {
 };
 const COLORS = { body: "#8d97a5", fin: "#4da3ff", wing: "#4da3ff", htail: "#59d09a",
                  vtail: "#e0a33c", vfin: "#c98bdc", flap: "#e06c5c", prot: "#d0d5dc",
-                 inlet: "#7fb2c9", prop: "#b9c2cf", jet: "#9aa6b6" };
+                 inlet: "#7fb2c9", prop: "#b9c2cf", jet: "#9aa6b6", contour: "#59d09a" };
 
 let PARTS = [];          // [{name, group, kind, stats}]
 let HINGES = [];         // [[Vector3, Vector3]] in DATCOM axes
@@ -1310,7 +1315,8 @@ function buildMissileModel(cse, warn, opts) {
     }
   }
 
-  missileGeomChecks(body, allFins);
+  missileGeomChecks(cse, body, allFins, warn);
+  buildContourOverlay(body, warn);
   buildProtuberances(cse, body, warn);
   buildInlets(cse, body, warn);
   return body;
@@ -1323,7 +1329,7 @@ function buildMissileModel(cse, warn, opts) {
  * The program does not check for these peculiarities."  A buried or floating
  * fin runs without complaint and quietly returns the wrong answer, so flag it.
  */
-function missileGeomChecks(body, fins) {
+function missileGeomChecks(cse, body, fins, warn) {
   const chk = m => { if (!CHECKS.includes(m)) CHECKS.push(m); };
   if (!body || !body.stations.length) return;
   const S = body.stations, x0 = S[0].x, x1 = S[S.length - 1].x;
@@ -1355,6 +1361,71 @@ function missileGeomChecks(body, fins) {
         chk(`Fin set ${n}: the body tapers under the root chord, from radius ${fmt(rL)} at the leading edge to ${fmt(rT)} at the trailing edge, so the root cannot lie flush along its whole length.`);
     }
   });
+
+  // --- protuberances: the arrays must actually cover what NPROT declares ---
+  const pr = NL(cse, "PROTUB");
+  if (pr) {
+    const nSets = Math.max(0, Math.round(num(pr, "NPROT", 0)));
+    const ptype = arr(pr, "PTYPE"), nloc = narr(pr, "NLOC"), xprot = narr(pr, "XPROT");
+    const MEM = { LUG: 4, SHOE: 3 };                  // manual: LUG has 4, SHOE has 3
+    let needMembers = 0, needAngles = 0;
+    for (let i = 0; i < nSets; i++) {
+      needMembers += MEM[String(ptype[i]).toUpperCase()] || 1;
+      needAngles += Math.max(1, Math.round(isNum(nloc[i]) ? nloc[i] : 1));
+    }
+    const phipro = narr(pr, "PHIPRO"), lprot = narr(pr, "LPROT");
+    if (phipro.length && phipro.length < needAngles)
+      chk(`$PROTUB: ${needAngles} protuberances are declared but PHIPRO gives only ${phipro.length} angles. The manual requires an angle for every one when this option is used.`);
+    if (lprot.length && lprot.length < needMembers)
+      chk(`$PROTUB: the member arrays need ${needMembers} entries (LUG counts as 4 members and SHOE as 3) but LPROT gives ${lprot.length}.`);
+    xprot.slice(0, nSets).forEach((x, i) => {
+      if (isNum(x) && (x < x0 - tol || x > x1 + tol))
+        chk(`$PROTUB set ${i + 1}: XPROT=${fmt(x)} is outside the body, which runs from x=${fmt(x0)} to x=${fmt(x1)}.`);
+    });
+  }
+
+  // --- inlets: the five stations, the boattail rule, and the mass flow ratio -
+  const inl = NL(cse, "INLET");
+  if (inl) {
+    const nin = Math.max(0, Math.round(num(inl, "NIN", 0)));
+    const type = String(str(inl, "INTYPE", "2DSIDE")).toUpperCase();
+    const X = narr(inl, "X"), H = narr(inl, "H"), W = narr(inl, "W");
+    const axi = (type === "AXI" || type === "2");
+    if (nin > 0) {
+      if (X.length !== 5) chk(`$INLET: X needs the five stations (leading edge, cowl lip, midbody start, boattail start, boattail end) but ${X.length} were given.`);
+      if (W.length !== 5) chk(`$INLET: W needs five values, one per station, but ${W.length} were given.`);
+      if (!axi && H.length !== 5) chk(`$INLET: H needs five values for a 2-D inlet, but ${H.length} were given.`);
+      // "The inlet must be boattailed, meaning H(5)*W(5) < H(4)*W(4) for 2D
+      //  inlets, or W(5) < W(4) for axisymmetric ones."
+      if (axi && W.length >= 5 && !(W[4] < W[3]))
+        chk(`$INLET: an axisymmetric inlet must be boattailed, so W(5) must be less than W(4); here W(5)=${fmt(W[4])} and W(4)=${fmt(W[3])}.`);
+      if (!axi && W.length >= 5 && H.length >= 5 && !(H[4] * W[4] < H[3] * W[3]))
+        chk(`$INLET: a 2-D inlet must be boattailed, so H(5)*W(5) must be less than H(4)*W(4); here ${fmt(H[4] * W[4])} against ${fmt(H[3] * W[3])}.`);
+      const xi = num(inl, "XINLT", NaN);
+      if (isNum(xi) && (xi < x0 - tol || xi > x1 + tol))
+        chk(`$INLET: XINLT=${fmt(xi)} is outside the body, which runs from x=${fmt(x0)} to x=${fmt(x1)}.`);
+      if (bool(inl, "ADD", false)) {
+        const mfr = narr(inl, "MFR"), nMach = Math.round(num(NL(cse, "FLTCON"), "NMACH", 0));
+        if (nMach && mfr.length < nMach)
+          chk(`$INLET: ADD=.TRUE. needs one MFR per freestream Mach number — ${nMach} expected, ${mfr.length} given.`);
+        mfr.forEach((m, i) => {
+          if (isNum(m) && (m <= 0 || m >= 1))
+            chk(`$INLET: MFR(${i + 1})=${fmt(m)} is outside the required range 0 < MFR < 1.`);
+        });
+      }
+    }
+  }
+
+  // --- reference quantities, reported as a note rather than a defect ---------
+  const rq = NL(cse, "REFQ");
+  if (rq && warn) {
+    const sref = num(rq, "SREF", NaN), lref = num(rq, "LREF", NaN);
+    const sBody = Math.PI * rMax * rMax, dBody = 2 * rMax;
+    if (isNum(sref) && sBody > 0 && Math.abs(sref - sBody) / sBody > 0.02)
+      warn(`$REFQ SREF=${fmt(sref)} differs from the body maximum cross-section of ${fmt(sBody)} (radius ${fmt(rMax)}), which is what the code uses when SREF is omitted. Deliberate if you are referencing something else.`);
+    if (isNum(lref) && dBody > 0 && Math.abs(lref - dBody) / dBody > 0.02)
+      warn(`$REFQ LREF=${fmt(lref)} differs from the body maximum diameter of ${fmt(dBody)}, which is the default reference length. Deliberate if you are referencing something else.`);
+  }
 
   // 4. ordering and spacing, both of which govern fin-shed vortex tracking
   for (let i = 1; i < fins.length; i++) {
@@ -2096,6 +2167,25 @@ document.addEventListener("dragover", e => e.preventDefault());
 document.addEventListener("drop", e => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) readFile(f); });
 function readFile(f) { const r = new FileReader(); r.onload = () => loadText(r.result, f.name); r.readAsText(f); }
 
+const ctrFile = document.getElementById("ctrFile");
+document.getElementById("ctrBtn").onclick = () => ctrFile.click();
+ctrFile.onchange = e => {
+  const f = e.target.files[0]; if (!f) return;
+  const r = new FileReader();
+  r.onload = () => {
+    CONTOUR = parseFor009(r.result);
+    if (!CONTOUR.length) { CONTOUR = null; alert("No (X, R, Z) rows found in that file."); return; }
+    document.getElementById("ctrClr").style.display = "";
+    rebuild();
+  };
+  r.readAsText(f);
+  ctrFile.value = "";
+};
+document.getElementById("ctrClr").onclick = () => {
+  CONTOUR = null;
+  document.getElementById("ctrClr").style.display = "none";
+  rebuild();
+};
 document.getElementById("caseSel").onchange = e => {
   CASE_I = +e.target.value; syncFlapPicker(CASES[CASE_I], true); rebuild(); fitView();
 };
@@ -2139,6 +2229,80 @@ function resize() {
 })();
 
 
+
+/* =======================================================================
+   12b.  for009.dat  —  the contour DATCOM generates for itself
+
+   Written to tape 9 with PRINT GEOM BODY or PART, as (X, R, Z) with many
+   points interpolated between the input stations. Overlaying it shows what
+   the code actually built from the deck, which is the only way to see how
+   an option 1 shape or a DISCON list was really interpreted. The manual
+   gives no column layout, so parse tolerantly.
+   ======================================================================= */
+let CONTOUR = null;
+
+function parseFor009(text) {
+  const rows = [];
+  text.replace(/\r/g, "").split("\n").forEach(line => {
+    const n = line.trim().split(/[\s,]+/).map(parseFloat);
+    if (n.length >= 2 && n.length <= 4 && n.every(v => isFinite(v))) rows.push(n);
+  });
+  if (!rows.length) return [];
+  // some writers lead with a 1-based point index; drop it if that is what it is
+  const indexed = rows.length > 2 && rows.every((r, i) => r.length === 4 && r[0] === i + 1);
+  return rows.filter(r => r.length >= (indexed ? 4 : 2)).map(r => {
+    const c = indexed ? r.slice(1) : r;
+    return { x: c[0], r: Math.abs(c[1]), z: isFinite(c[2]) ? c[2] : 0 };
+  });
+}
+
+/** Meridian lines plus station rings, drawn in DATCOM axes. */
+function contourObjects() {
+  const objs = [], mat = new THREE.LineBasicMaterial({ color: 0x59d09a });
+  [0, 90, 180, 270].forEach(phi => {
+    const c = Math.cos(phi * D2R), sn = Math.sin(phi * D2R);
+    const pts = CONTOUR.map(p => V3(p.x, sn * p.r, c * p.r + (p.z || 0)));
+    objs.push(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), mat));
+  });
+  const step = Math.max(1, Math.round(CONTOUR.length / 24));
+  for (let i = 0; i < CONTOUR.length; i += step) {
+    const p = CONTOUR[i], ring = [];
+    for (let j = 0; j <= 32; j++) {
+      const t = 2 * Math.PI * j / 32;
+      ring.push(V3(p.x, Math.sin(t) * p.r, Math.cos(t) * p.r + (p.z || 0)));
+    }
+    objs.push(new THREE.Line(new THREE.BufferGeometry().setFromPoints(ring), mat));
+  }
+  return objs;
+}
+
+/** Overlay the contour and report how far the drawn body strays from it. */
+function buildContourOverlay(body, warn) {
+  if (!CONTOUR || !CONTOUR.length) return;
+  let maxDev = 0, atX = 0, sum = 0, n = 0;
+  if (body && body.stations.length) {
+    const S = body.stations, x0 = S[0].x, x1 = S[S.length - 1].x;
+    CONTOUR.forEach(p => {
+      if (p.x < x0 || p.x > x1) return;
+      const d = Math.abs(p.r - bodyAt(body, p.x).w);
+      if (d > maxDev) { maxDev = d; atX = p.x; }
+      sum += d * d; n++;
+    });
+  }
+  const xs = CONTOUR.map(p => p.x), rs = CONTOUR.map(p => p.r);
+  addPart(`DATCOM contour (for009)`, "contour", contourObjects(), {
+    "Points": CONTOUR.length,
+    "x from / to": `${fmt(Math.min(...xs))} → ${fmt(Math.max(...xs))}`,
+    "Max radius": Math.max(...rs),
+    "Cambered (Z)": CONTOUR.some(p => p.z) ? "yes" : "no",
+    "Max deviation from drawn body": n ? maxDev : "—",
+    "  at station x": n ? atX : "—",
+    "RMS deviation": n ? Math.sqrt(sum / n) : "—",
+  });
+  const rMax = Math.max(...rs);
+  if (n && rMax > 0 && maxDev / rMax > 0.02)
+    warn(`The for009 contour departs from the drawn body by up to ${fmt(maxDev)} at x=${fmt(atX)}, which is ${fmt(100 * maxDev / rMax, 1)}% of the maximum radius. The contour is what the code actually built, so trust it over the reconstruction.`);
+}
 
 /* =======================================================================
    13.  CASE BUILDER
@@ -2514,12 +2678,6 @@ function cbGenerate() {
   const nPts = (arrays.find(v => v.key === "alpha")?._vals.length || 0) *
                (arrays.find(v => v.key === "mach")?._vals.length || 0);
 
-  const nlNames = new Set();
-  arrays.concat(caseVars).forEach(v => nlNames.add(v.nl));
-  const nlTotal = combos.length * Math.max(1, nlNames.size);
-  if (CB.form === "missile" && nlTotal > 300)
-    warns.push(`${combos.length} cases x ${nlNames.size} namelists = ${nlTotal} reads: with SAVE in effect DATCOM reads at most 300 namelists in a run, so this will overflow. Split it into separate files, or untick "repeat every variable".`);
-
   sum.innerHTML = `<b>${combos.length}</b> case${combos.length === 1 ? "" : "s"}` +
     (nPts ? ` · <b>${nPts}</b> α×Mach points each · <b>${combos.length * nPts}</b> total` : "");
 
@@ -2529,17 +2687,9 @@ function cbGenerate() {
     return;
   }
 
-  const L = [];
-  L.push("*  DATCOM case sweep — generated by datcomViz");
-  L.push("*  Paste below an existing deck. The case before this block must define");
-  L.push("*  the geometry" + (CB.form === "missile"
-    ? " and end with a SAVE card so these cases inherit it." : "."));
-  if (CB.repeat) L.push("*  Every case restates all swept variables, so each stands on its own.");
-  L.push("*");
-  L.push(`*  ${combos.length} case(s)` + (nPts ? `, ${nPts} alpha x Mach points each` : ""));
-  warns.forEach(w => L.push("*  NOTE: " + w));
-  L.push("*");
-
+  // ---- emit the cases first, counting the namelists actually written -------
+  const bodyL = [];
+  let nlCount = 0;
   const prev = {};
   const useSave = CB.form === "missile";     // BODY/SYNTHS decks retain inputs on their own
   combos.forEach((combo, ci) => {
@@ -2569,12 +2719,35 @@ function cbGenerate() {
     });
 
     const label = caseVars.map((v, i) => `${v.name}=${fmtF(combo[i])}`).join(" ");
-    L.push(`CASEID ${ci + 1}/${combos.length}${label ? "  " + label : ""}`);
+    bodyL.push(`CASEID ${ci + 1}/${combos.length}${label ? "  " + label : ""}`);
     ["FLTCON", "REFQ", "DEFLCT", "SYMFLP", "ASYFLP"].forEach(nl => {
-      if (parts[nl] && parts[nl].length) L.push(nlBlock(nl, parts[nl]));
+      if (parts[nl] && parts[nl].length) { bodyL.push(nlBlock(nl, parts[nl])); nlCount++; }
     });
-    if (ci < combos.length - 1) { if (useSave) L.push("SAVE"); L.push("NEXT CASE"); }
+    if (ci < combos.length - 1) { if (useSave) bodyL.push("SAVE"); bodyL.push("NEXT CASE"); }
   });
+
+  // The 300-namelist ceiling is scoped to SAVE, so it only bites on the form
+  // that needs SAVE. Count what was actually emitted rather than estimating,
+  // and only offer the compact switch when it is still available.
+  if (useSave && nlCount > 300) {
+    const fix = CB.repeat
+      ? ' Untick "repeat every variable in each case" to cut this down, and split the run if it is still over.'
+      : " Split it into separate runs.";
+    warns.push(`this sweep writes ${nlCount} namelists across ${combos.length} cases; with SAVE in effect DATCOM reads at most 300 in one run.${fix}`);
+  }
+
+  const L = [];
+  L.push("*  DATCOM case sweep — generated by datcomViz  ·  datcom.aero-dev.com");
+  L.push("*  Paste below an existing deck. The case before this block must define");
+  L.push("*  the geometry" + (CB.form === "missile"
+    ? " and end with a SAVE card so these cases inherit it." : "."));
+  if (CB.repeat) L.push("*  Every case restates all swept variables, so each stands on its own.");
+  L.push("*");
+  L.push(`*  ${combos.length} case(s)` + (nPts ? `, ${nPts} alpha x Mach points each` : "") +
+         `, ${nlCount} namelist${nlCount === 1 ? "" : "s"}`);
+  warns.forEach(w => L.push("*  NOTE: " + w));
+  L.push("*");
+  L.push.apply(L, bodyL);
   out.textContent = L.join("\n") + "\n";
   cbSave();
 }

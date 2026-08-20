@@ -49,7 +49,29 @@ checks:
 - fin sets out of front-to-back order, or with no positive longitudinal gap, either of
   which silently stops fin-shed vortices being tracked between them.
 
+It also checks the rules the manual states outright but the code will not enforce for
+you: that `PHIPRO` supplies an angle for every protuberance, that the member arrays cover
+every member (`LUG` counts as four and `SHOE` as three), that `XPROT` and `XINLT` fall on
+the body, that an inlet is boattailed — `H(5)*W(5) < H(4)*W(4)`, or `W(5) < W(4)`
+axisymmetric — and that `MFR` is supplied once per Mach number and lies in `0 < MFR < 1`.
+
+Reference quantities are reported as a **note** rather than a defect: `SREF` and `LREF`
+are compared against the body maximum cross-section and diameter, which is what the code
+falls back on when they are omitted. Differing from them is often deliberate.
+
 These are reported separately from parser notes, and a clean deck says so.
+
+## Overlaying `for009.dat`
+
+With `PRINT GEOM BODY` or `PART`, DATCOM writes the body contour it generated for itself
+to tape 9 as `(X, R, Z)`, interpolating many points between your input stations. **Overlay
+for009 contour** draws it over the reconstruction and reports the maximum and RMS radial
+deviation between the two, flagging anything past 2 % of the maximum radius.
+
+This is the only way to see what the code actually built from an option 1 shape or a
+`DISCON` list, rather than what the deck appears to say. It is also a check on this
+viewer: against a contour generated from the exact tangent-ogive relation, the drawn body
+agrees to 0.04 % of the body radius.
 
 ## Case builder
 
