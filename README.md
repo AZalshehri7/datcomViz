@@ -5,8 +5,9 @@ A browser-based **geometry viewer** for DATCOM input decks.
 **<https://datcom.aero-dev.com>**
 
 Open `index.html` in a browser — that's it. No build step, no server, no network. The
-page loads `vendor/three.min.js` from disk, so it works offline and nothing you drop on
-it ever leaves the machine.
+page loads `vendor/three.min.js` from disk, so it works offline and nothing you drop on it
+ever leaves the machine. Case-builder settings are kept in the browser's local storage;
+your deck is not.
 
 ## What it does
 
@@ -32,6 +33,24 @@ or write anything.
   deck does not draw the way you expected.
 - Save PNG writes the current view to a file.
 
+## Geometry checks
+
+The Messages panel reports problems the solver itself will not. Of `SSPAN(1)` the manual
+states: *"It is the user's responsibility to assure that the fins are (1) on the body
+surface, and (2) do not lie internal to the body mold line. The program does not check for
+these peculiarities."* A fin left floating off the body, or buried inside it, runs without
+complaint and quietly returns the wrong answer. For `AXIBOD`/`FINSET` decks the viewer
+checks:
+
+- a fin root that sits inside the body, or stands off it, against the body radius at the
+  root mid-chord — the same station the code uses when `SSPAN(1)=0` seats a fin for you;
+- a root chord running past the base, or ahead of the nose;
+- a root chord over a tapering section, where it cannot lie flush along its whole length;
+- fin sets out of front-to-back order, or with no positive longitudinal gap, either of
+  which silently stops fin-shed vortices being tracked between them.
+
+These are reported separately from parser notes, and a clean deck says so.
+
 ## Case builder
 
 The **Cases** tab turns a set of sweeps into DATCOM case text. Pick the variables you
@@ -54,6 +73,10 @@ By default every case restates all of the swept namelists, so each case stands o
 and a mis-ordered `SAVE` cannot silently carry a stale deflection forward. Only the
 geometry is inherited. Untick *Repeat every variable in each case* to emit just what
 changed between consecutive cases, which produces a much shorter file.
+
+Your builder setup is kept in this browser's local storage, so a sweep survives a reload;
+**Reset** clears it. The deck itself is never stored. Loading a deck re-seeds the builder
+from it.
 
 It enforces the rules the manual states: `BETA` and `PHI` cannot appear in the same case,
 `NALPHA` must be greater than 1, the array size limits per variable, `ALSCHD` must be

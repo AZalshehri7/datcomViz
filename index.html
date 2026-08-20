@@ -67,6 +67,10 @@
   .msg.warn{background:#2e2717;border-left:2px solid var(--warn)}
   .msg.err{background:#2e1c1a;border-left:2px solid var(--err)}
   .msg.info{background:#18242e;border-left:2px solid var(--accent)}
+  .msg.chk{background:#2f1b1a;border-left:2px solid var(--err)}
+  .msghdr{font-size:10px;text-transform:uppercase;letter-spacing:.9px;color:var(--dim);
+    margin:2px 0 5px}
+  .msghdr.alert{color:var(--err)}
   .msg.local{background:#17241e;border-left:2px solid #59d09a;color:#a9bdb2;
     margin:9px 0 0;font-size:11px}
   pre.raw{margin:0;font:11px/1.4 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
@@ -155,8 +159,9 @@
         <div id="drop">Drop a deck here<br><span class="sub">or click to browse — for005.dat, .dcm, .inp, .txt</span></div>
         <input type="file" id="file" hidden accept=".dat,.dcm,.inp,.txt,.for,.005,*">
         <div class="msg local">Your deck stays on this device. It is read and drawn
-          entirely in the browser — nothing is uploaded, stored or sent anywhere, and the
-          page keeps working with the network off.</div>
+          entirely in the browser — nothing is uploaded or sent anywhere, and the page
+          keeps working with the network off. Your Cases tab settings are saved in this
+          browser so a sweep survives a reload; the deck itself is never saved.</div>
         <div id="caseWrap" style="display:none;margin-top:9px">
           <div class="sub" style="margin-bottom:3px">Case</div>
           <select id="caseSel"></select>
@@ -240,6 +245,7 @@
         <div id="cbBar">
           <span id="cbSummary"></span>
           <label class="chk" style="font-size:11.5px"><input type="checkbox" id="cbRepeat" checked> Repeat every variable in each case</label>
+          <button id="cbReset" title="Clear the saved builder setup in this browser">Reset</button>
           <button id="cbCopy">Copy</button>
           <button id="cbDl">Download .dat</button>
         </div>
@@ -1179,9 +1185,11 @@ function buildMissileModel(cse, warn, opts) {
     });
   } else warn("No $AXIBOD or $ELLBOD in this case — no body drawn.");
 
+  const allFins = [];
   for (let n = 1; n <= 9; n++) {
     const fs = buildFinSet(cse, n, body, warn);
     if (!fs) continue;
+    allFins.push(fs);
     const k = fs.sspan.length;
     const meshes = [], flapMeshes = [];
     const dScale = opts.defScale;
@@ -1302,9 +1310,62 @@ function buildMissileModel(cse, warn, opts) {
     }
   }
 
+  missileGeomChecks(body, allFins);
   buildProtuberances(cse, body, warn);
   buildInlets(cse, body, warn);
   return body;
+}
+
+/**
+ * Geometry checks the solver explicitly declines to make. Of SSPAN(1) the
+ * manual says: "It is the user's responsibility to assure that the fins are
+ * (1) on the body surface, and (2) do not lie internal to the body mold line.
+ * The program does not check for these peculiarities."  A buried or floating
+ * fin runs without complaint and quietly returns the wrong answer, so flag it.
+ */
+function missileGeomChecks(body, fins) {
+  const chk = m => { if (!CHECKS.includes(m)) CHECKS.push(m); };
+  if (!body || !body.stations.length) return;
+  const S = body.stations, x0 = S[0].x, x1 = S[S.length - 1].x;
+  const rMax = Math.max(...S.map(p => p.w));
+  const tol = Math.max(1e-9, 0.01 * rMax);           // 1% of max body radius
+
+  fins.forEach(fs => {
+    const n = fs.n, xLE = fs.xle[0], cR = fs.chord[0], xMid = xLE + cR / 2, xTE = xLE + cR;
+
+    // 1. root chord must lie within the body's longitudinal extent
+    if (xTE > x1 + tol)
+      chk(`Fin set ${n}: the root chord runs to x=${fmt(xTE)} but the body ends at x=${fmt(x1)}, so ${fmt(xTE - x1)} of the root has no body beneath it.`);
+    if (xLE < x0 - tol)
+      chk(`Fin set ${n}: the root chord starts at x=${fmt(xLE)}, ahead of the nose tip at x=${fmt(x0)}.`);
+
+    // 2. root radius against the mould line, unless the code placed it itself
+    if (!fs.rootOnBody && xMid >= x0 && xMid <= x1) {
+      const rBody = bodyAt(body, xMid).w, gap = fs.sspan[0] - rBody;
+      if (gap < -tol)
+        chk(`Fin set ${n}: SSPAN(1)=${fmt(fs.sspan[0])} is inside the body, whose radius at the root mid-chord is ${fmt(rBody)} — the fin root is buried by ${fmt(-gap)}. DATCOM does not check this.`);
+      else if (gap > tol)
+        chk(`Fin set ${n}: SSPAN(1)=${fmt(fs.sspan[0])} stands ${fmt(gap)} off the body, whose radius at the root mid-chord is ${fmt(rBody)} — the fin floats. Use SSPAN(1)=0 to have the code seat it.`);
+    }
+
+    // 3. a root chord over a tapering section cannot sit flush along its length
+    if (xLE >= x0 && xTE <= x1) {
+      const rL = bodyAt(body, xLE).w, rT = bodyAt(body, xTE).w;
+      if (Math.abs(rL - rT) > tol)
+        chk(`Fin set ${n}: the body tapers under the root chord, from radius ${fmt(rL)} at the leading edge to ${fmt(rT)} at the trailing edge, so the root cannot lie flush along its whole length.`);
+    }
+  });
+
+  // 4. ordering and spacing, both of which govern fin-shed vortex tracking
+  for (let i = 1; i < fins.length; i++) {
+    const a = fins[i - 1], b = fins[i];
+    const aTE = Math.max(...a.xle.map((x, j) => x + a.chord[j]));
+    const bLE = Math.min(...b.xle);
+    if (bLE < Math.min(...a.xle))
+      chk(`Fin set ${b.n} lies ahead of fin set ${a.n}. Fin sets should be numbered front to back, and vortices are only tracked from a lower-numbered set to a higher one.`);
+    else if (bLE <= aTE + tol)
+      chk(`Fin sets ${a.n} and ${b.n} have no positive longitudinal gap (set ${a.n} ends at x=${fmt(aTE)}, set ${b.n} starts at x=${fmt(bLE)}), so the code will not track vortices between them.`);
+  }
 }
 
 function buildProtuberances(cse, body, warn) {
@@ -1798,7 +1859,7 @@ const ui = id => document.getElementById(id).checked;
    11.  ORCHESTRATION
    ======================================================================= */
 
-let DECK = null, CASES = [], CASE_I = 0, WARNINGS = [], FLAVOR = "";
+let DECK = null, CASES = [], CASE_I = 0, WARNINGS = [], CHECKS = [], FLAVOR = "";
 
 function detectFlavor(cse) {
   const k = Object.keys(cse.nl);
@@ -1837,7 +1898,7 @@ function syncFlapPicker(cse, reset) {
 function rebuild() {
   const cse = CASES[CASE_I];
   if (!cse) return;
-  WARNINGS = [];
+  WARNINGS = []; CHECKS = [];
   const warn = m => { if (!WARNINGS.includes(m)) WARNINGS.push(m); };
   clearModel();
   FLAVOR = detectFlavor(cse);
@@ -1941,15 +2002,27 @@ function renderStats() {
 function renderMessages() {
   const el = document.getElementById("msgs");
   el.innerHTML = "";
-  if (!WARNINGS.length) {
-    el.innerHTML = '<div class="msg info">Deck parsed with no warnings.</div>';
+  const hdr = (txt, alert) => {
+    const h = document.createElement("div");
+    h.className = "msghdr" + (alert ? " alert" : "");
+    h.textContent = txt; el.appendChild(h);
+  };
+  const msg = (txt, cls) => {
+    const d = document.createElement("div");
+    d.className = "msg " + cls; d.textContent = txt; el.appendChild(d);
+  };
+  if (!WARNINGS.length && !CHECKS.length) {
+    msg("Deck parsed with no warnings, and the geometry checks are clear.", "info");
     return;
   }
-  WARNINGS.forEach(w => {
-    const d = document.createElement("div");
-    d.className = "msg " + (/failed|cannot|could not/i.test(w) ? "err" : "warn");
-    d.textContent = w; el.appendChild(d);
-  });
+  if (CHECKS.length) {
+    hdr(`${CHECKS.length} geometry check${CHECKS.length === 1 ? "" : "s"} — DATCOM does not test for these`, true);
+    CHECKS.forEach(c => msg(c, "chk"));
+  }
+  if (WARNINGS.length) {
+    if (CHECKS.length) hdr("Notes");
+    WARNINGS.forEach(w => msg(w, /failed|cannot|could not/i.test(w) ? "err" : "warn"));
+  }
 }
 
 function rawDump(cse) {
@@ -2212,6 +2285,51 @@ function cbBuild() {
   }
 }
 
+/* ---- persistence ---------------------------------------------------------
+   The builder setup is kept in this browser's local storage so a sweep
+   survives a reload. Only these settings are stored; the deck itself never is.
+   -------------------------------------------------------------------------- */
+const CB_KEY = "datcomviz.cases.v1";
+const CB_FIELDS = ["key", "name", "cls", "defl", "enabled", "mode", "list",
+                   "a", "b", "step", "count", "panels", "pattern"];
+function cbSave() {
+  try {
+    const vars = CB.vars.map(v => {
+      const o = {};
+      CB_FIELDS.forEach(k => { if (v[k] !== undefined) o[k] = v[k]; });
+      return o;
+    });
+    localStorage.setItem(CB_KEY, JSON.stringify({ form: CB.form, loop: CB.loop, repeat: CB.repeat, vars }));
+  } catch (e) { /* storage disabled or full — the builder still works */ }
+}
+function cbRestore() {
+  let st;
+  try { st = JSON.parse(localStorage.getItem(CB_KEY) || "null"); } catch (e) { st = null; }
+  if (!st || !Array.isArray(st.vars) || !st.vars.length) return false;
+  CB.form = st.form === "digital" ? "digital" : "missile";
+  CB.loop = isNum(st.loop) ? st.loop : 2;
+  CB.repeat = st.repeat !== false;
+  CB.vars = cbSpec(CB.form);
+  st.vars.filter(v => v.defl && /^DELTA[1-9]$/.test(v.name || "")).forEach(v =>
+    CB.vars.push(cbDeflSpec([{ n: +v.name.slice(5), panels: clamp(v.panels || 1, 1, 8) }])[0]));
+  CB.vars.forEach(v => {
+    const sv = st.vars.find(x => x.key === v.key);
+    if (!sv) return;
+    CB_FIELDS.forEach(k => { if (sv[k] !== undefined && k !== "key") v[k] = sv[k]; });
+    if (v.defl && (!Array.isArray(v.pattern) || v.pattern.length !== v.panels))
+      v.pattern = cbPattern("all", v.panels);
+  });
+  const box = document.getElementById("cbRepeat");
+  if (box) box.checked = CB.repeat;
+  return true;
+}
+function cbForget() {
+  try { localStorage.removeItem(CB_KEY); } catch (e) {}
+  CB.vars = []; CB.repeat = true; CB.loop = 2;
+  document.getElementById("cbRepeat").checked = true;
+  cbBuild(); cbRender(); cbGenerate();
+}
+
 /* ---- UI ------------------------------------------------------------------ */
 function cbRender() {
   const host = document.getElementById("cbLeft");
@@ -2458,6 +2576,7 @@ function cbGenerate() {
     if (ci < combos.length - 1) { if (useSave) L.push("SAVE"); L.push("NEXT CASE"); }
   });
   out.textContent = L.join("\n") + "\n";
+  cbSave();
 }
 
 /* ---- wiring -------------------------------------------------------------- */
@@ -2467,12 +2586,13 @@ function cbShow(which) {
   document.getElementById("casePane").classList.toggle("on", !g);
   document.getElementById("tab-geom").classList.toggle("on", g);
   document.getElementById("tab-case").classList.toggle("on", !g);
-  if (!g && !CB.vars.length) { cbBuild(); cbRender(); }
+  if (!g && !CB.vars.length) { if (!cbRestore()) cbBuild(); cbRender(); }
   if (!g) cbGenerate();
 }
 document.getElementById("tab-geom").onclick = () => cbShow("geom");
 document.getElementById("tab-case").onclick = () => cbShow("case");
 document.getElementById("cbRepeat").onchange = e => { CB.repeat = e.target.checked; cbGenerate(); };
+document.getElementById("cbReset").onclick = cbForget;
 document.getElementById("cbCopy").onclick = () => {
   const t = document.getElementById("cbOut").textContent;
   navigator.clipboard.writeText(t).then(() => {
