@@ -33,6 +33,25 @@ or write anything.
   deck does not draw the way you expected.
 - Save PNG writes the current view to a file.
 
+## DATCOM release
+
+Limits and behaviour differ between releases, and a deck that is valid for one is not
+necessarily valid for another. Pick yours in the sidebar; the choice is remembered, and a
+deck using something only a later release has switches it automatically and says so.
+
+| | Rev 5/97 (1997 manual) | Rev 3/11 (2011 manual) |
+|---|---|---|
+| `ALPHA` per case | 20 | 100 |
+| Fin sets | **4**, non-overlapping, numbering front-to-back required | 9, ordering advisory |
+| `ALPHA` + `BETA` + `PHI` together | allowed; `BETA` ignored when `PHI` is non-zero | error, stops the code |
+| β defined as | tan⁻¹(v/u) | sin⁻¹(v/V₀) |
+| `NVOR` shed vortices | — | yes |
+| Body `Z` camber, conic centrebody | — | yes (from 1/06) |
+| `NINCR` in `$TRIM` | — | yes |
+
+Because the β definition changed, the same `BETA` value means slightly different flow
+between releases, and the conversion to total angle of attack differs with it.
+
 ## Geometry checks
 
 The Messages panel reports problems the solver itself will not. Of `SSPAN(1)` the manual
@@ -99,6 +118,13 @@ changed between consecutive cases, which produces a much shorter file.
 Your builder setup is kept in this browser's local storage, so a sweep survives a reload;
 **Reset** clears it. The deck itself is never stored. Loading a deck re-seeds the builder
 from it.
+
+It also guards the α/β combinations that come back as NaN. DATCOM resolves aerodynamic
+roll from `tan φ = tan β / tan α`, so **α = 0 with non-zero β is a division by zero**, and
+**negative α with non-zero β** cannot be recovered by a single arctangent because total
+angle of attack is always positive. Both are flagged, with the suggestion to run those
+points as `ALPHA` = total angle of attack together with `PHI`. It also refuses a schedule
+containing duplicate `ALPHA` values, which DATCOM will not run.
 
 It enforces the rules the manual states: `BETA` and `PHI` cannot appear in the same case,
 `NALPHA` must be greater than 1, the array size limits per variable, `ALSCHD` must be

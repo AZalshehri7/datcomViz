@@ -171,6 +171,13 @@
           <button id="ctrClr" style="display:none">Clear contour</button>
         </div>
         <input type="file" id="ctrFile" hidden>
+        <div style="margin-top:9px">
+          <div class="sub" style="margin-bottom:3px">DATCOM release (sets the limits used)</div>
+          <select id="relSel">
+            <option value="old">Rev 5/97 — 1997 manual</option>
+            <option value="new">Rev 3/11 — 2011 manual</option>
+          </select>
+        </div>
         <div id="caseWrap" style="display:none;margin-top:9px">
           <div class="sub" style="margin-bottom:3px">Case</div>
           <select id="caseSel"></select>
@@ -293,6 +300,21 @@
    ======================================================================= */
 
 const D2R = Math.PI / 180, R2D = 180 / Math.PI;
+
+/* Limits and behaviour differ by release. The 1997 manual (Rev 5/97) and the
+   2011 revision (Rev 3/11) disagree on several things that decide whether a
+   deck is valid at all, so the tool has to be told which one you run. */
+const RELEASES = {
+  old: { id: "old", label: "Rev 5/97", manual: "1997 manual",
+         alphaMax: 20, finSets: 4, betaPhiFatal: false, orderFatal: true,
+         hasNVOR: false, hasBodyCamber: false, hasNINCR: false, hasConicCentre: false,
+         betaDef: "tan\u207B\u00B9(v/u)" },
+  new: { id: "new", label: "Rev 3/11", manual: "2011 manual",
+         alphaMax: 100, finSets: 9, betaPhiFatal: true, orderFatal: false,
+         hasNVOR: true, hasBodyCamber: true, hasNINCR: true, hasConicCentre: true,
+         betaDef: "sin\u207B\u00B9(v/V\u2080)" },
+};
+let REL = RELEASES.old, REL_LOCKED = false, RELNOTE = "";
 const isNum = v => typeof v === "number" && isFinite(v);
 const fmt = (v, d = 3) => (isNum(v) ? (Math.abs(v) >= 1e5 || (v !== 0 && Math.abs(v) < 1e-3)
   ? v.toExponential(2) : (+v.toFixed(d)).toString()) : "—");
@@ -1367,6 +1389,27 @@ function missileGeomChecks(cse, body, fins, warn) {
     }
   });
 
+  // --- features the running release may not have ---------------------------
+  const maxSet = REL.finSets;
+  fins.forEach(f => {
+    if (f.n > maxSet)
+      chk(`FINSET${f.n} is beyond the ${maxSet} fin sets ${REL.label} allows (${REL.manual}).`);
+  });
+  const bodyNl = NL(cse, "AXIBOD") || NL(cse, "ELLBOD");
+  if (!REL.hasBodyCamber && bodyNl && narr(bodyNl, "Z").some(v => v))
+    chk(`The body Z camber array is not available in ${REL.label}; it was added in the 1/06 release, so this centreline offset will be ignored by the code even though it is drawn here.`);
+  if (!REL.hasConicCentre && bodyNl) {
+    const dn = num(bodyNl, "DNOSE", NaN), dc = num(bodyNl, "DCENTR", NaN);
+    if (isNum(dn) && isNum(dc) && Math.abs(dn - dc) > 1e-9)
+      chk(`DCENTR differs from DNOSE, making the centrebody conic. ${REL.label} cannot handle conic centrebodies; support arrived in the 1/06 release.`);
+  }
+  if (!REL.hasNVOR) fins.forEach(f => {
+    if (NL(cse, "FINSET" + f.n) && isNum(num(NL(cse, "FINSET" + f.n), "NVOR", NaN)))
+      chk(`FINSET${f.n} sets NVOR, which ${REL.label} does not have — it was added in the 3/11 release and will be rejected or ignored.`);
+  });
+  if (!REL.hasNINCR && NL(cse, "TRIM") && isNum(num(NL(cse, "TRIM"), "NINCR", NaN)))
+    chk(`$TRIM sets NINCR, which ${REL.label} does not have — it was added in the 3/11 release.`);
+
   // --- protuberances: the arrays must actually cover what NPROT declares ---
   const pr = NL(cse, "PROTUB");
   if (pr) {
@@ -1438,7 +1481,9 @@ function missileGeomChecks(cse, body, fins, warn) {
     const aTE = Math.max(...a.xle.map((x, j) => x + a.chord[j]));
     const bLE = Math.min(...b.xle);
     if (bLE < Math.min(...a.xle))
-      chk(`Fin set ${b.n} lies ahead of fin set ${a.n}. Fin sets should be numbered front to back, and vortices are only tracked from a lower-numbered set to a higher one.`);
+      chk(REL.orderFatal
+        ? `Fin set ${b.n} lies ahead of fin set ${a.n}. ${REL.manual} requires fin sets to be numbered sequentially front to back and to be non-overlapping, so this is an input error rather than a preference.`
+        : `Fin set ${b.n} lies ahead of fin set ${a.n}. Fin sets should be numbered front to back, and vortices are only tracked from a lower-numbered set to a higher one.`);
     else if (bLE <= aTE + tol)
       chk(`Fin sets ${a.n} and ${b.n} have no positive longitudinal gap (set ${a.n} ends at x=${fmt(aTE)}, set ${b.n} starts at x=${fmt(bLE)}), so the code will not track vortices between them.`);
   }
@@ -1975,6 +2020,7 @@ function rebuild() {
   const cse = CASES[CASE_I];
   if (!cse) return;
   WARNINGS = []; CHECKS = [];
+  if (RELNOTE) WARNINGS.push(RELNOTE);
   const warn = m => { if (!WARNINGS.includes(m)) WARNINGS.push(m); };
   clearModel();
   FLAVOR = detectFlavor(cse);
@@ -2019,6 +2065,8 @@ function loadText(text, name) {
     sel.appendChild(o);
   });
   document.getElementById("caseWrap").style.display = CASES.length > 1 ? "" : "none";
+  RELNOTE = "";
+  relAutoBump(CASES[0]);
   syncFlapPicker(CASES[0], true);
   rebuild();
   fitView();
@@ -2171,6 +2219,40 @@ drop.addEventListener("drop", e => { const f = e.dataTransfer.files[0]; if (f) r
 document.addEventListener("dragover", e => e.preventDefault());
 document.addEventListener("drop", e => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) readFile(f); });
 function readFile(f) { const r = new FileReader(); r.onload = () => loadText(r.result, f.name); r.readAsText(f); }
+
+const relSel = document.getElementById("relSel");
+try { const r = localStorage.getItem("datcomviz.release"); if (RELEASES[r]) REL = RELEASES[r]; } catch (e) {}
+relSel.value = REL.id;
+relSel.onchange = e => {
+  REL = RELEASES[e.target.value] || RELEASES.old;
+  REL_LOCKED = true; RELNOTE = "";
+  try { localStorage.setItem("datcomviz.release", REL.id); } catch (e2) {}
+  const a = CB.vars.find(v => v.key === "alpha");
+  if (a) a.max = REL.alphaMax;
+  if (CASES.length) rebuild();
+  if (CB.vars.length) { cbRender(); cbGenerate(); }
+};
+
+/** A deck using something only a later release has tells us which one to assume.
+    Runs once when a deck is loaded, and never overrides an explicit choice. */
+function relAutoBump(cse) {
+  if (REL_LOCKED || REL.id !== "old" || !cse) return;
+  const why = [];
+  for (let n = 5; n <= 9; n++) if (NL(cse, "FINSET" + n)) { why.push("FINSET" + n); break; }
+  for (let n = 1; n <= 9; n++) {
+    const f = NL(cse, "FINSET" + n);
+    if (f && isNum(num(f, "NVOR", NaN))) { why.push("NVOR"); break; }
+  }
+  const b = NL(cse, "AXIBOD") || NL(cse, "ELLBOD");
+  if (b && narr(b, "Z").some(v => v)) why.push("body Z camber");
+  if (NL(cse, "TRIM") && isNum(num(NL(cse, "TRIM"), "NINCR", NaN))) why.push("NINCR");
+  if (!why.length) return;
+  REL = RELEASES.new; relSel.value = "new";
+  try { localStorage.setItem("datcomviz.release", "new"); } catch (e) {}
+  const a = CB.vars.find(v => v.key === "alpha");
+  if (a) a.max = REL.alphaMax;
+  RELNOTE = `This deck uses ${why.join(", ")}, which only exists from a later release, so the limits were switched to ${REL.label}. Change it back in the sidebar if you run an older build.`;
+}
 
 const ctrFile = document.getElementById("ctrFile");
 document.getElementById("ctrBtn").onclick = () => ctrFile.click();
@@ -2391,7 +2473,7 @@ function cbSpec(form) {
   }
   return [
     R({ key: "alpha", label: "Angle of attack α", unit: "deg", cls: "array", nl: "FLTCON",
-        name: "ALPHA", count_name: "NALPHA", max: 100, min_n: 2, enabled: true, a: -4, b: 20, step: 4 }),
+        name: "ALPHA", count_name: "NALPHA", max: REL.alphaMax, min_n: 2, enabled: true, a: -4, b: 20, step: 4 }),
     R({ key: "mach", label: "Mach number", unit: "", cls: "array", nl: "FLTCON",
         name: "MACH", count_name: "NMACH", max: 20, enabled: true, mode: "list", list: "0.8, 1.2, 2.0, 3.0" }),
     R({ key: "ren", label: "Reynolds number / unit length", unit: "1/ft", cls: "array", nl: "FLTCON",
@@ -2672,7 +2754,26 @@ function cbGenerate() {
   caseVars.forEach(v => { if (!v._vals.length) errs.push(`${v.label}: no values.`); });
 
   const beta = on.find(v => v.key === "beta"), phi = on.find(v => v.key === "phi");
-  if (beta && phi) errs.push("BETA and PHI cannot be used in the same case — enable one or the other.");
+  if (beta && phi) {
+    // 3/11 stops the run; 5/97 simply ignores BETA when PHI is non-zero
+    if (REL.betaPhiFatal) errs.push(`BETA and PHI cannot be used in the same case — ${REL.label} treats that as an error and stops. Enable one or the other.`);
+    else warns.push(`both BETA and PHI are enabled. ${REL.label} allows this but ignores BETA whenever PHI is non-zero, so the sideslip sweep will have no effect.`);
+  }
+  // The (alpha, beta) to (alpha_T, phi) conversion divides by a function of
+  // alpha, so zero or negative alpha with non-zero sideslip is degenerate.
+  const alphaV = on.find(v => v.key === "alpha");
+  if (beta && alphaV && beta._vals.some(b => Math.abs(b) > 1e-9)) {
+    if (alphaV._vals.some(a => Math.abs(a) < 1e-9))
+      warns.push(`this sweep pairs a non-zero BETA with alpha = 0. The code resolves aerodynamic roll from tan(phi) = tan(beta)/tan(alpha), which divides by zero there, and the coefficients usually come back as NaN. Run those points as ALPHA = total angle of attack with PHI instead.`);
+    if (alphaV._vals.some(a => a < -1e-9))
+      warns.push(`this sweep pairs a non-zero BETA with negative alpha. Total angle of attack is always positive, so negative alpha has to be carried as a roll angle past 90 degrees, which a single arctangent cannot recover; expect wrong signs or NaN. Run those points as ALPHA with PHI instead.`);
+  }
+  // "Missile Datcom will not run if two or more identical ALPHA values are defined"
+  if (alphaV) {
+    const seen = new Set(), dup = new Set();
+    alphaV._vals.forEach(a => { const k = a.toFixed(6); if (seen.has(k)) dup.add(+k); seen.add(k); });
+    if (dup.size) errs.push(`the angle of attack schedule repeats ${[...dup].map(fmtF).join(", ")}. DATCOM will not run with two or more identical ALPHA values.`);
+  }
 
   if (CB.form === "missile") {
     const mach = arrays.find(v => v.key === "mach");
