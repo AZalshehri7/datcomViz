@@ -6,3 +6,6 @@ Thumbs.db
 
 # local scratch
 .test-*.html
+
+# wrangler local state — holds the Cloudflare account id and account name
+.wrangler/
