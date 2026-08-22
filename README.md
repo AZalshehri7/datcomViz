@@ -116,14 +116,89 @@ It also guards the α/β combinations that come back as NaN. DATCOM resolves aer
 roll from `tan φ = tan β / tan α`, so **α = 0 with non-zero β is a division by zero**, and
 **negative α with non-zero β** cannot be recovered by a single arctangent because total
 angle of attack is always positive. Both are flagged, with the suggestion to run those
-points as `ALPHA` = total angle of attack together with `PHI`. It also refuses a schedule
-containing duplicate `ALPHA` values, which DATCOM will not run.
+points as `ALPHA` = total angle of attack together with `PHI` — see *Sweeping angle of
+attack and sideslip* below. It refuses a schedule containing duplicate `ALPHA` values,
+which DATCOM will not run, and reports how many runs a zero-incidence point repeats across
+a `PHI` sweep.
 
 It enforces the rules the manual states: `NALPHA` must be greater than 1, the array size
 limits per variable, `ALSCHD` must be ascending, `REN`/`ALT` pair one-to-one with `MACH`
 (a single value is broadcast), and with `SAVE` in effect a run reads at most 300
 namelists. Enabling both `BETA` and `PHI` is allowed but noted, since the code ignores
 `BETA` whenever `PHI` is non-zero.
+
+## Sweeping angle of attack and sideslip
+
+There are two ways to give the pitch and yaw angles, and the choice matters more than it
+looks.
+
+**`ALPHA` + `BETA`** specifies body-axis angles. It is the natural form for a constant-β
+sweep, but the code converts internally to total angle of attack α_T and aerodynamic roll
+φ. In Rev 5/97, where β is defined as tan⁻¹(v/u):
+
+```
+tan α_T = sqrt(tan²α + tan²β)
+tan φ   = tan β / tan α
+```
+
+The denominator vanishes at α = 0, so **α = 0 with non-zero β is a division by zero** and
+the coefficients come back as NaN. Negative α is degenerate for the same reason: α_T is
+positive by definition, so negative α has to be carried as a roll angle past 90°, which a
+single arctangent cannot recover. Neither is a limit on how large β may be — β = −8° is
+perfectly fine at α = 4°.
+
+**`ALPHA` + `PHI`** hands the code the pair it actually wants. When `PHI` is non-zero,
+`ALPHA` is read as the **total** angle of attack, so no conversion happens and there is no
+singularity. Going the other way:
+
+```
+tan α = tan α_T · cos φ
+tan β = tan α_T · sin φ
+```
+
+φ is not sideslip. Because `tan β = tan α_T sin φ`, **|β| can never exceed α_T**, and a
+case of constant φ traces a ray of constant β/α ratio rather than a line of constant β.
+
+### Covering the envelope
+
+Sweep φ from 0° to 180° with α_T as the in-case array: φ = 0 is pure nose-up pitch, φ = 90
+is pure sideslip at zero incidence, φ = 180 is pure nose-down. `ALPHA` 0:2:16 across that
+range spans α from −16° to +16° with |β| up to 16°, and never asks the code to convert.
+
+The other half of the circle follows by mirror symmetry — but only if the configuration is
+mirror-symmetric about the vertical plane, meaning the fin roll angles map onto themselves
+under φ → 360−φ. Fins at `0,120,240` or `60,180,300` do. The same Y rolled to `30,150,270`
+does **not**, and then the full 0–360° is needed.
+
+Since `tan²α + tan²β = tan²α_T`, this samples a **polar** grid in (tan α, tan β) — circles
+of constant α_T, rays of constant φ — which is the natural grid for a body of revolution.
+
+### Choosing the φ step
+
+Less obvious than it looks. A fin set with rotational order *n* plus mirror symmetry has a
+fundamental domain of 180/*n* degrees, and each swept φ folds into it as `φ mod (360/n)`,
+reflected about the midpoint. Steps that share a large common factor with 360/*n* waste
+cases on repeats. For a three-fin set, where the domain is 0–60°:
+
+| φ step | cases | aerodynamically distinct |
+|---|---|---|
+| 45° | 5 | 5 |
+| 30° | 7 | **3** |
+| 22.5° | 9 | **9** |
+| 15° | 13 | **5** |
+
+22.5° gives nine distinct orientations at a uniform 7.5° spacing, because gcd(22.5, 120) is
+small. 15° gives thirteen cases for only five distinct results — more runs for worse
+coverage. Check the arithmetic for your own fin count before assuming a finer step helps.
+
+Where a sweep does repeat itself, the duplicates are a free consistency check: φ and
+φ + 360/*n* are the same flow with the transverse force and moment components rotated,
+while roll and axial force are unchanged. Comparing a pair is a cheap way to see whether
+the methods actually respect the symmetry you are relying on.
+
+At α_T = 0 the roll angle means nothing, so that point is the same condition in every φ
+case. The builder says how many runs that repeats, and dropping `0` from the schedule
+removes them.
 
 ## Coverage
 
@@ -136,7 +211,7 @@ deck never exercises are handled too.
 |---|---|
 | `AXIBOD` | Option 1 (nose / centrebody / afterbody) with `CONICAL`, `OGIVE`, `POWER`, `HAACK`, `KARMAN` noses; `BNOSE` blunting and `TRUNC` truncation; conic centrebodies; conical and ogival boattails and flares. Option 2 `NX`/`X`/`R` tables with `Z` camber. |
 | `ELLBOD` | Both options, with per-station ellipticity (`ENOSE`/`ECENTR`/`EAFT`, or `H`/`W`/`ELLIP`). |
-| `FINSET1–9` | Multi-segment planforms defined by explicit `XLE` or by `SWEEP`/`STA` chaining; `SSPAN(1)=0` auto-placement on the body mould line; `HEX`, `ARC`, `NACA` and `USER` sections; `NPANEL`, `PHIF`, `GAM`; `CFOC` trailing-edge devices, full or partial span. |
+| `FINSET`n | Four sets in this release, though all nine are parsed and anything beyond four is flagged. Multi-segment planforms defined by explicit `XLE` or by `SWEEP`/`STA` chaining; `SSPAN(1)=0` auto-placement on the body mould line; `HEX`, `ARC`, `NACA` and `USER` sections; `NPANEL`, `PHIF`, `GAM`; `CFOC` trailing-edge devices, full or partial span. |
 | `DEFLCT` | `DELTAn` per panel. For an all-moveable panel the whole fin pivots about `XHINGE` with `SKEW`; where `CFOC` defines a trailing-edge device only that device deflects, about the straight hinge `CFOC` implies, and `XHINGE`/`SKEW` are correctly ignored. |
 | `PROTUB` | `VCYL`, `HCYL`, `BLOCK`, `FAIRING`, `LUG`, `SHOE` — drawn as simplified primitives. |
 | `INLET` | `2DSIDE`, `2DTOP`, `AXI`, lofted through the five `X`/`H`/`W` stations, with diverter. |
