@@ -132,10 +132,20 @@ the same geometry deck and run them separately. The header of each says which pa
 and which cases it holds, files are named `datcom-cases-2of5.dat`, and a part picker plus
 **Download all parts** sit in the toolbar.
 
-Tick **Include geometry (ready to run)** and the loaded deck's geometry case is written
-into the head of every file, followed by `SAVE`, `NEXT CASE` and that part's cases. Each
-file is then a complete deck you can run directly rather than a fragment to paste. The
-geometry is copied verbatim, so comments, the `DIM` card and any control cards survive.
+Tick **Include geometry (ready to run)** and the loaded deck's geometry is folded into the
+**first case** of every file, so each file is a complete deck you can run directly rather
+than a fragment to paste. It is merged into that case rather than placed ahead of it as a
+case of its own, because a standalone geometry case executes too and returns a second set
+of results at whatever angles of attack the deck happened to carry — which shows up as
+duplicated alpha when the output is read back. The deck's own `CASEID` and `$FLTCON` are
+dropped, since the sweep supplies both; everything else survives verbatim, including
+comments, the `DIM` card and control cards.
+
+Tick **PLOT (for003.dat)** to add the `PLOT` card, which makes DATCOM write total force
+and moment data — `ALPHA, CN, CM, CA, CY, CLN, CLL, DELTA` — to `for003.dat` as a
+fixed-format table, one zone per case. Far easier to read into MATLAB than the printed
+listing. `PLOT` applies to a whole run, so it is written once per file rather than per
+case.
 
 The *reserve for geometry* box is how many namelists the geometry case ahead of the sweep
 uses; that many are held back from the 300. It is **counted from the loaded deck** rather
