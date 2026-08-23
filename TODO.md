@@ -42,17 +42,6 @@ checks are missile-side only. Equivalents worth adding there:
   catches the `TYPE=1` versus `CHRDBP` inconsistency in the ASW-20 deck, but only
   indirectly, via the planform warning.
 
-## Auto-detect the geometry reserve in the Cases tab
-
-When a sweep is split across files, the budget is 300 namelists minus a *reserve* for the
-geometry case sitting ahead of it. That reserve is typed in by hand and defaults to 12,
-which is a guess, not a measurement. Set too low, a run can still overflow the limit — the
-one way the split can quietly fail to do its job.
-
-The number is already available: when a deck is loaded, count the namelists in its first
-case and use that as the default, leaving the box editable for when the fragment is going
-under a different deck.
-
 ## Smaller items
 
 - **Control surfaces do not follow `TWISTA`.** They rotate about the true hinge line and

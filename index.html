@@ -254,6 +254,7 @@
         <div id="cbBar">
           <span id="cbSummary"></span>
           <label class="chk" style="font-size:11.5px"><input type="checkbox" id="cbRepeat" checked> Repeat every variable in each case</label>
+          <label class="chk" style="font-size:11.5px" title="Put the loaded deck's geometry case at the head of every file, so each one runs on its own instead of needing to be pasted under a deck."><input type="checkbox" id="cbEmbed"> Include geometry (ready to run)</label>
           <label class="chk" style="font-size:11.5px" title="DAMP is effective only for the case it appears in, so it has to be repeated in every case to get dynamic derivatives throughout the sweep."><input type="checkbox" id="cbDamp"> DAMP in every case</label>
           <label class="chk" style="font-size:11.5px" title="A run may read at most 300 namelists once SAVE is in effect. Split the sweep across files so every case still gets run."><input type="checkbox" id="cbSplit" checked> Split over the 300 limit</label>
           <span class="sub" style="font-size:11px">reserve <input type="text" id="cbReserve" value="12" style="width:38px;text-align:right;padding:2px 4px;font-size:11px"> for geometry</span>
@@ -2061,7 +2062,9 @@ function rebuild() {
   renderTitle(cse);
   document.getElementById("empty").style.display = PARTS.length ? "none" : "flex";
   document.getElementById("raw").textContent = rawDump(cse);
-  if (CB.vars.length) { cbBuild(); cbRender(); cbGenerate(); }
+  // A new deck must not wipe a sweep that is already set up. Only the geometry
+  // reserve is refreshed, since that is a property of the deck rather than a choice.
+  if (CB.vars.length) { cbSyncReserve(); cbRender(); cbGenerate(); }
   updateHud(cse);
 }
 
@@ -2388,7 +2391,7 @@ function buildContourOverlay(body, warn) {
                      all arrays, so almost nothing needs a second case.
    ======================================================================= */
 
-const CB = { form: "missile", vars: [], loop: 2, repeat: true, split: true, reserve: 12, damp: false };
+const CB = { form: "missile", vars: [], loop: 2, repeat: true, split: true, reserve: 12, damp: false, embed: false };
 let CB_FILES = [], cbPart = 0;
 
 /* ---- value formatting ---------------------------------------------------- */
@@ -2519,6 +2522,39 @@ function cbBuild() {
   }
 }
 
+/* ---- the loaded deck's geometry case --------------------------------------
+   Everything before the first NEXT CASE defines the vehicle. Kept verbatim so
+   comments, the DIM card and any control cards survive intact.
+   -------------------------------------------------------------------------- */
+function deckGeometryText() {
+  if (!DECK || !DECK.text) return null;
+  const lines = DECK.text.replace(/\r\n?/g, "\n").split("\n");
+  let end = lines.length;
+  for (let i = 0; i < lines.length; i++)
+    if (/^\s*NEXT\s+CASE\b/i.test(lines[i])) { end = i; break; }
+  const out = lines.slice(0, end);
+  // trailing blank lines and a trailing SAVE are re-added by the caller
+  while (out.length && (!out[out.length - 1].trim() || /^\s*SAVE\s*$/i.test(out[out.length - 1])))
+    out.pop();
+  return out.length ? out.join("\n") : null;
+}
+
+/** How many namelists that geometry case reads — the real reserve. */
+function deckGeometryNL() {
+  const t = deckGeometryText();
+  if (!t) return null;
+  try { return tokenizeDeck(t).filter(i => i.type === "nl").length; } catch (e) { return null; }
+}
+
+/** Refresh the reserve from the loaded deck, leaving every sweep setting alone. */
+function cbSyncReserve() {
+  const n = deckGeometryNL();
+  if (n === null) return;
+  CB.reserve = clamp(n, 0, 250);
+  const rv = document.getElementById("cbReserve");
+  if (rv) rv.value = String(CB.reserve);
+}
+
 /* ---- persistence ---------------------------------------------------------
    The builder setup is kept in this browser's local storage so a sweep
    survives a reload. Only these settings are stored; the deck itself never is.
@@ -2535,7 +2571,7 @@ function cbSave() {
     });
     localStorage.setItem(CB_KEY, JSON.stringify({ form: CB.form, loop: CB.loop, repeat: CB.repeat,
                                                   split: CB.split, reserve: CB.reserve,
-                                                  damp: CB.damp, vars }));
+                                                  damp: CB.damp, embed: CB.embed, vars }));
   } catch (e) { /* storage disabled or full — the builder still works */ }
 }
 function cbRestore() {
@@ -2548,6 +2584,7 @@ function cbRestore() {
   CB.split = st.split !== false;
   CB.reserve = isNum(st.reserve) ? st.reserve : 12;
   CB.damp = st.damp === true;
+  CB.embed = st.embed === true;
   CB.vars = cbSpec(CB.form);
   st.vars.filter(v => v.defl && /^DELTA[1-9]$/.test(v.name || "")).forEach(v =>
     CB.vars.push(cbDeflSpec([{ n: +v.name.slice(5), panels: clamp(v.panels || 1, 1, 8) }])[0]));
@@ -2563,6 +2600,8 @@ function cbRestore() {
   const sp = document.getElementById("cbSplit"); if (sp) sp.checked = CB.split;
   const rv = document.getElementById("cbReserve"); if (rv) rv.value = String(CB.reserve);
   const dp = document.getElementById("cbDamp"); if (dp) dp.checked = CB.damp;
+  const em = document.getElementById("cbEmbed");
+  if (em) { em.checked = CB.embed; if (rv) rv.disabled = CB.embed; }
   return true;
 }
 function cbForget() {
@@ -2817,7 +2856,12 @@ function cbGenerate() {
   arrays.concat(caseVars).forEach(v => nlSet.add(v.nl));
   if (CB.form === "digital") nlSet.add("FLTCON");
   const perCase = Math.max(1, nlSet.size);
-  const reserve = clamp(Math.round(CB.reserve), 0, 250);
+  // With the geometry embedded its namelists are known exactly, so use the real
+  // count rather than the typed reserve.
+  const embedText = CB.embed ? deckGeometryText() : null;
+  const reserve = embedText ? (deckGeometryNL() || 0) : clamp(Math.round(CB.reserve), 0, 250);
+  if (CB.embed && !embedText)
+    warns.push("include geometry is ticked but no deck is loaded, so the files carry sweep cases only. Drop a deck on the sidebar to have its geometry written into each one.");
   const capacity = Math.max(1, Math.floor((300 - reserve) / perCase));
   const splitting = useSave && CB.split && combos.length > capacity;
   const nFiles = splitting ? Math.ceil(combos.length / capacity) : 1;
@@ -2867,18 +2911,28 @@ function cbGenerate() {
     const L = [];
     L.push("*  DATCOM case sweep — generated by datcomViz  ·  datcom.aero-dev.com");
     if (nFiles > 1) L.push(`*  PART ${part} OF ${nFiles} — cases ${from + 1} to ${to} of ${combos.length}.`);
-    L.push("*  Paste below an existing deck. The case before this block must define");
-    L.push("*  the geometry" + (useSave
-      ? " and end with a SAVE card so these cases inherit it." : "."));
-    if (nFiles > 1)
-      L.push("*  Every part is a separate run and needs the same geometry ahead of it.");
+    if (embedText) {
+      L.push(`*  Ready to run as it stands: the geometry case below came from`);
+      L.push(`*  ${DECK && DECK.name ? DECK.name : "the loaded deck"}, and this part's cases follow it.`);
+    } else {
+      L.push("*  Paste below an existing deck. The case before this block must define");
+      L.push("*  the geometry" + (useSave
+        ? " and end with a SAVE card so these cases inherit it." : "."));
+      if (nFiles > 1)
+        L.push("*  Every part is a separate run and needs the same geometry ahead of it.");
+    }
     if (CB.repeat) L.push("*  Every case restates all swept variables, so each stands on its own.");
     L.push("*");
     L.push(`*  ${to - from} case(s)` + (nPts ? `, ${nPts} alpha x Mach points each` : "") +
            `, ${nlCount} namelist${nlCount === 1 ? "" : "s"}` +
-           (useSave ? ` (+ ${reserve} reserved for geometry = ${nlCount + reserve} of 300)` : ""));
+           (useSave ? ` (+ ${reserve} for the geometry case = ${nlCount + reserve} of 300)` : ""));
     warns.forEach(w => L.push("*  NOTE: " + w));
     L.push("*");
+    if (embedText) {                          // the vehicle, then this part's cases
+      L.push(embedText);
+      if (useSave) L.push("SAVE");
+      L.push("NEXT CASE");
+    }
     L.push.apply(L, bodyL);
     return { text: L.join("\n") + "\n", cases: to - from, nl: nlCount };
   };
@@ -2971,6 +3025,11 @@ document.getElementById("cbPartSel").onchange = e => {
   document.getElementById("cbOut").textContent = CB_FILES[cbPart].text;
 };
 document.getElementById("cbDamp").onchange = e => { CB.damp = e.target.checked; cbGenerate(); };
+document.getElementById("cbEmbed").onchange = e => {
+  CB.embed = e.target.checked;
+  document.getElementById("cbReserve").disabled = CB.embed;   // counted, not guessed
+  cbPart = 0; cbGenerate();
+};
 document.getElementById("cbSplit").onchange = e => {
   CB.split = e.target.checked; cbPart = 0; cbGenerate();
 };

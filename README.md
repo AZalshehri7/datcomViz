@@ -130,10 +130,20 @@ the same geometry deck and run them separately. The header of each says which pa
 and which cases it holds, files are named `datcom-cases-2of5.dat`, and a part picker plus
 **Download all parts** sit in the toolbar.
 
-The *reserve for geometry* box is how many namelists your geometry case uses — that many
-are held back from the 300. The split is sized on the fully restated case, so a compact run
-comes out comfortably under rather than exactly at the limit. Untick **Split over the 300
-limit** to get a single file regardless, and a warning instead.
+Tick **Include geometry (ready to run)** and the loaded deck's geometry case is written
+into the head of every file, followed by `SAVE`, `NEXT CASE` and that part's cases. Each
+file is then a complete deck you can run directly rather than a fragment to paste. The
+geometry is copied verbatim, so comments, the `DIM` card and any control cards survive.
+
+The *reserve for geometry* box is how many namelists the geometry case ahead of the sweep
+uses; that many are held back from the 300. It is **counted from the loaded deck** rather
+than guessed, and goes read-only once the geometry is embedded, since it is then known
+exactly. The split is sized on the fully restated case, so a compact run comes out
+comfortably under rather than exactly at the limit. Untick **Split over the 300 limit** to
+get a single file regardless, and a warning instead.
+
+Loading a deck does not disturb a sweep you have already set up — only the reserve is
+refreshed, since that is a property of the deck rather than a choice you made.
 
 Your builder setup is kept in this browser's local storage, so a sweep survives a reload;
 **Reset** clears it. The deck itself is never stored. Loading a deck re-seeds the builder
