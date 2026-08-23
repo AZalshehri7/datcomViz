@@ -225,6 +225,9 @@ Individual fins are `SFIN1`…`SFIN4`. Trimmed and untrimmed results are `TRIMD`
 Every variable occupies a fixed **20-element** slot, one per angle of attack, whatever
 `NALPHA` actually is — so trim each slot to `NALPHA`, which is element 1 of `FLC`.
 
+The layouts below are confirmed against a real dump of a four-fin-set vehicle, not just
+read off the manual.
+
 **Table 21 — static, `SB…`, elements 1–220**
 
 | Elements | Variable | | Elements | Variable |
@@ -275,6 +278,12 @@ Every variable occupies a fixed **20-element** slot, one per angle of attack, wh
 | 21–40 | `BBETA` — body-axis sideslip |
 | 41–60 | `BPHI` — body-axis roll |
 | 61–80 | `ALPTOT` — total angle of attack |
+
+**One block set is written per Mach number, not per case.** A case with `NMACH=5` produces
+five `SB…`/`DB…` dumps, each holding the alpha sweep at one Mach, in schedule order. `FLC`
+repeats the whole Mach schedule in every one, so the Mach a given dump belongs to comes
+from its ordinal position within the case, not from anything in the block. Expect
+`NMACH × cases` block sets in the file.
 
 A block name that does not match the vehicle is **not** an error. `WRITE SB1234` against a
 two-fin-set deck writes all 220 values as zero and says nothing, so check the fin-set count
