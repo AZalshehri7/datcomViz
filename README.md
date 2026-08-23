@@ -114,9 +114,9 @@ appears" — so ticking it emits `DAMP` in each one rather than only at the top.
 control card, not a namelist, so it does not count against the 300.
 
 Later manuals state that damping derivatives are not computed when `PHI` or `BETA` is
-non-zero. The 1997 manual does not mention it either way, so the builder raises it as a
-caution rather than a fact when you combine `DAMP` with a `PHI` or `BETA` sweep. Worth
-checking one case before trusting the dynamic derivatives across a whole roll sweep.
+non-zero, which would gut a roll sweep. **That restriction does not apply to Rev 5/97** —
+a case run at `PHI=45` with zero deflections returns `CMQ` — so no warning is raised. Be
+aware of it if you ever move to a newer build.
 
 ### Sweeps that exceed the 300-namelist limit
 

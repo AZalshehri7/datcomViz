@@ -42,6 +42,17 @@ checks are missile-side only. Equivalents worth adding there:
   catches the `TYPE=1` versus `CHRDBP` inconsistency in the ASW-20 deck, but only
   indirectly, via the planform warning.
 
+## Auto-detect the geometry reserve in the Cases tab
+
+When a sweep is split across files, the budget is 300 namelists minus a *reserve* for the
+geometry case sitting ahead of it. That reserve is typed in by hand and defaults to 12,
+which is a guess, not a measurement. Set too low, a run can still overflow the limit — the
+one way the split can quietly fail to do its job.
+
+The number is already available: when a deck is loaded, count the namelists in its first
+case and use that as the default, leaving the box editable for when the fragment is going
+under a different deck.
+
 ## Smaller items
 
 - **Control surfaces do not follow `TWISTA`.** They rotate about the true hinge line and
@@ -52,3 +63,9 @@ checks are missile-side only. Equivalents worth adding there:
   meshes already exist; only a writer is missing.
 - **`for009` beyond the body.** Only the body contour is overlaid today. Fin pressure and
   geometry tapes (`for011`, `for021`) were not investigated.
+- **Only `DAMP` is offered as a control card.** `PART`, `BUILD`, `SOSE`, `HYPER`, `SPIN`
+  and the `PRINT` variants are all per-case in the same way and could be ticks alongside
+  it, or a free-text box for cards to repeat in every case.
+- **`DAMP` with non-zero `BETA` is unverified.** A `PHI=45` case was checked and returns
+  `CMQ`, so the restriction later manuals describe does not apply to Rev 5/97 for roll.
+  The `BETA` half of that statement was never tested.

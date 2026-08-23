@@ -2758,15 +2758,9 @@ function cbGenerate() {
     if (alphaV._vals.some(a => a < -1e-9))
       warns.push(`this sweep pairs a non-zero BETA with negative alpha. Total angle of attack is always positive, so negative alpha has to be carried as a roll angle past 90 degrees, which a single arctangent cannot recover; expect wrong signs or NaN. Run those points as ALPHA with PHI instead.`);
   }
-  // The 2011 manual states damping derivatives are not computed when PHI or
-  // BETA is non-zero. The 1997 manual does not say so either way, so raise it
-  // as a caution rather than a fact about this build.
-  if (CB.damp) {
-    const nz = on.filter(v => (v.key === "phi" || v.key === "beta") && v._vals.some(x => Math.abs(x) > 1e-9))
-                  .map(v => v.name);
-    if (nz.length)
-      warns.push(`DAMP is on and ${nz.join(" and ")} is non-zero in part of this sweep. Later manuals state that damping derivatives are not computed when PHI or BETA is non-zero; the 1997 manual does not mention it, so check one case before relying on the dynamic derivatives across the whole matrix.`);
-  }
+  // Later manuals state damping derivatives are not computed when PHI or BETA
+  // is non-zero. That does not hold for Rev 5/97: a case at PHI=45 with zero
+  // deflections returns CMQ, so no caution is raised here.
 
   // At zero total incidence the roll angle has no meaning, so an ALPHA of 0
   // is the same flight condition in every PHI case.
