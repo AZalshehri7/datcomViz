@@ -180,6 +180,102 @@ limits per variable, `ALSCHD` must be ascending, `REN`/`ALT` pair one-to-one wit
 namelists. Enabling both `BETA` and `PHI` is allowed but noted, since the code ignores
 `BETA` whenever `PHI` is non-zero.
 
+## Getting results out
+
+The printed listing is awkward to read back into MATLAB or Simulink. DATCOM will write
+machine-readable files instead, and the Cases tab can add the cards for you.
+
+| File | Card | Contents |
+|---|---|---|
+| `for003.dat` | `PLOT` | Total force and moment table: `ALPHA, CN, CM, CA, CY, CLN, CLL, DELTA`, one zone per case. Static only. |
+| `for004.dat` | `FORMAT` + `WRITE` | Named data blocks in a format you choose — the route to static **and** dynamic data with the sweep variables alongside. |
+| `for009.dat` | `PRINT GEOM BODY` | The body contour the code generated. This viewer can overlay it. |
+
+**WRITE tables (for004.dat)** emits a working set:
+
+```
+FORMAT (10E13.5)
+WRITE FLC,1,145
+WRITE TOTALC,1,80
+WRITE SB1234,1,220
+WRITE DB1234,1,400
+```
+
+`PLOT`, `FORMAT` and `WRITE` are effective for a whole run rather than one case, so they
+are written once per file — unlike `DAMP`, which has to repeat. The dynamic block is only
+written when `DAMP` is ticked, since nothing fills it otherwise.
+
+### Block names by configuration
+
+The block name encodes the vehicle, so it is taken from the loaded deck's fin sets:
+
+| Configuration | Static (Table 21) | Dynamic (Table 22) |
+|---|---|---|
+| Body alone | `SBODY` | `DBODY` |
+| Body + 1 fin set | `SB1` | `DB1` |
+| Body + 2 fin sets | `SB12` | `DB12` |
+| Body + 3 fin sets | `SB123` | `DB123` |
+| Body + 4 fin sets | `SB1234` | `DB1234` |
+
+Individual fins are `SFIN1`…`SFIN4`. Trimmed and untrimmed results are `TRIMD` and
+`UNTRIM` (Tables 23 and 24).
+
+### What each block holds
+
+Every variable occupies a fixed **20-element** slot, one per angle of attack, whatever
+`NALPHA` actually is — so trim each slot to `NALPHA`, which is element 1 of `FLC`.
+
+**Table 21 — static, `SB…`, elements 1–220**
+
+| Elements | Variable | | Elements | Variable |
+|---|---|---|---|---|
+| 1–20 | `CN` | | 121–140 | `CNA` |
+| 21–40 | `CM` | | 141–160 | `CMA` |
+| 41–60 | `CA` | | 161–180 | `CYB` |
+| 61–80 | `CY` | | 181–200 | `CNB` |
+| 81–100 | `CLN` | | 201–220 | `CLB` |
+| 101–120 | `CLL` | | | |
+
+**Table 22 — dynamic, `DB…`, elements 1–400**
+
+| Elements | Variable | | Elements | Variable |
+|---|---|---|---|---|
+| 1–20 | `CNQ` | | 201–220 | `CLNR` |
+| 21–40 | `CMQ` | | 221–240 | `CLLR` |
+| 41–60 | `CAQ` | | 241–260 | `CNP` |
+| 61–80 | `CYQ` | | 261–280 | `CMP` |
+| 81–100 | `CLNQ` | | 281–300 | `CAP` |
+| 101–120 | `CLLQ` | | 301–320 | `CYP` |
+| 121–140 | `CNR` | | 321–340 | `CLNP` |
+| 141–160 | `CMR` | | 341–360 | `CLLP` |
+| 161–180 | `CAR` | | 361–380 | `CNAD` |
+| 181–200 | `CYR` | | 381–400 | `CMAD` |
+
+**Table 25 — flight conditions, `FLC`, elements 1–145**
+
+| Elements | Variable | | Elements | Variable |
+|---|---|---|---|---|
+| 1 | `NALPHA` | | 45–65 | `ALT` |
+| 2–21 | `ALPHA` | | 66–85 | `REN` |
+| 22 | `BETA` | | 86–105 | `VINF` |
+| 23 | `PHI` | | 106–125 | `TINF` |
+| 24 | `NMACH` | | 126–145 | `PINF` |
+| 25–44 | `MACH` | | | |
+
+**Table 26 — attitude, `TOTALC`, elements 1–80**
+
+| Elements | Variable |
+|---|---|
+| 1–20 | `BALPHA` — body-axis angle of attack |
+| 21–40 | `BBETA` — body-axis sideslip |
+| 41–60 | `BPHI` — body-axis roll |
+| 61–80 | `ALPTOT` — total angle of attack |
+
+`FLC` carries `BETA` and `PHI` per case, so a roll or sideslip sweep stays identifiable
+in the dump without matching results back by case order. The `FORMAT` card takes a Fortran
+format in parentheses and must precede the `WRITE` cards; the default if omitted is
+`8F10.4`, which is usually too coarse for derivatives.
+
 ## Sweeping angle of attack and sideslip
 
 There are two ways to give the pitch and yaw angles, and the choice matters more than it

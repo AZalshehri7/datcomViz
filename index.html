@@ -254,6 +254,7 @@
         <div id="cbBar">
           <span id="cbSummary"></span>
           <label class="chk" style="font-size:11.5px"><input type="checkbox" id="cbRepeat" checked> Repeat every variable in each case</label>
+          <label class="chk" style="font-size:11.5px" title="Adds FORMAT and WRITE cards that dump the flight conditions, attitude, static coefficients and — with DAMP on — the dynamic derivatives to for004.dat as plain numbers."><input type="checkbox" id="cbWrite"> WRITE tables (for004.dat)</label>
           <label class="chk" style="font-size:11.5px" title="Adds the PLOT card, which makes DATCOM write the total force and moment data to for003.dat as a fixed-format table — far easier to read than the printed listing."><input type="checkbox" id="cbPlot"> PLOT (for003.dat)</label>
           <label class="chk" style="font-size:11.5px" title="Put the loaded deck's geometry case at the head of every file, so each one runs on its own instead of needing to be pasted under a deck."><input type="checkbox" id="cbEmbed"> Include geometry (ready to run)</label>
           <label class="chk" style="font-size:11.5px" title="DAMP is effective only for the case it appears in, so it has to be repeated in every case to get dynamic derivatives throughout the sweep."><input type="checkbox" id="cbDamp"> DAMP in every case</label>
@@ -2392,7 +2393,7 @@ function buildContourOverlay(body, warn) {
                      all arrays, so almost nothing needs a second case.
    ======================================================================= */
 
-const CB = { form: "missile", vars: [], loop: 2, repeat: true, split: true, reserve: 12, damp: false, embed: false, plot: false };
+const CB = { form: "missile", vars: [], loop: 2, repeat: true, split: true, reserve: 12, damp: false, embed: false, plot: false, write: false };
 let CB_FILES = [], cbPart = 0;
 
 /* ---- value formatting ---------------------------------------------------- */
@@ -2540,6 +2541,28 @@ function deckGeometryText() {
   return out.length ? out.join("\n") : null;
 }
 
+/**
+ * WRITE dumps a named common block to for004.dat. The block name encodes the
+ * configuration — SB1 for body plus one fin set, SB1234 for four, SBODY for
+ * body alone — so pick it from the vehicle rather than from what is swept.
+ * Extents are the array lengths in Tables 21, 22, 25 and 26 of the manual.
+ */
+const WRITE_TABLES = {
+  FLC:    { to: 145, what: "flight conditions: NALPHA, ALPHA, BETA, PHI, NMACH, MACH, ALT, REN, VINF, TINF, PINF" },
+  TOTALC: { to: 80,  what: "attitude: BALPHA, BBETA, BPHI, ALPTOT" },
+  static: { to: 220, what: "static: CN, CM, CA, CY, CLN, CLL, CNA, CMA, CYB, CNB, CLB" },
+  dyn:    { to: 400, what: "dynamic: CNQ, CMQ, CAQ, CYQ, CLNQ, CLLQ, CNR..CLLR, CNP..CLLP, CNAD, CMAD" },
+};
+function writeBlockNames() {
+  let n = 0;
+  const cse = CASES[CASE_I];
+  if (cse) for (let i = 1; i <= 9; i++) if (NL(cse, "FINSET" + i)) n++;
+  if (!n) n = CB.vars.filter(v => v.defl && v.enabled).length;
+  n = clamp(n, 0, 4);
+  const cfg = n ? "1234".slice(0, n) : null;
+  return { n, stat: cfg ? "SB" + cfg : "SBODY", dyn: cfg ? "DB" + cfg : "DBODY" };
+}
+
 /** Cut named namelist blocks out of raw deck text, leaving the rest verbatim. */
 function stripNamelistBlocks(src, names) {
   let out = "", i = 0;
@@ -2611,7 +2634,7 @@ function cbSave() {
     });
     localStorage.setItem(CB_KEY, JSON.stringify({ form: CB.form, loop: CB.loop, repeat: CB.repeat,
                                                   split: CB.split, reserve: CB.reserve,
-                                                  damp: CB.damp, embed: CB.embed, plot: CB.plot, vars }));
+                                                  damp: CB.damp, embed: CB.embed, plot: CB.plot, write: CB.write, vars }));
   } catch (e) { /* storage disabled or full — the builder still works */ }
 }
 function cbRestore() {
@@ -2626,6 +2649,7 @@ function cbRestore() {
   CB.damp = st.damp === true;
   CB.embed = st.embed === true;
   CB.plot = st.plot === true;
+  CB.write = st.write === true;
   CB.vars = cbSpec(CB.form);
   st.vars.filter(v => v.defl && /^DELTA[1-9]$/.test(v.name || "")).forEach(v =>
     CB.vars.push(cbDeflSpec([{ n: +v.name.slice(5), panels: clamp(v.panels || 1, 1, 8) }])[0]));
@@ -2644,6 +2668,7 @@ function cbRestore() {
   const em = document.getElementById("cbEmbed");
   if (em) { em.checked = CB.embed; if (rv) rv.disabled = CB.embed; }
   const pl = document.getElementById("cbPlot"); if (pl) pl.checked = CB.plot;
+  const wr = document.getElementById("cbWrite"); if (wr) wr.checked = CB.write;
   return true;
 }
 function cbForget() {
@@ -2843,6 +2868,14 @@ function cbGenerate() {
   // is non-zero. That does not hold for Rev 5/97: a case at PHI=45 with zero
   // deflections returns CMQ, so no caution is raised here.
 
+  if (CB.write) {
+    const wb = writeBlockNames();
+    if (!CB.damp)
+      warns.push(`WRITE is on but DAMP is not, so only the static block ${wb.stat} is dumped. Tick DAMP to have the dynamic derivatives written as well.`);
+    if (wb.n === 0)
+      warns.push("WRITE is on and no fin sets were found, so the body-alone blocks SBODY and DBODY are used. Load the deck if the vehicle has fins.");
+  }
+
   // At zero total incidence the roll angle has no meaning, so an ALPHA of 0
   // is the same flight condition in every PHI case.
   const phiV = on.find(v => v.key === "phi");
@@ -2977,9 +3010,19 @@ function cbGenerate() {
       bodyL.push(`CASEID ${ci + 1}/${combos.length}${label ? "  " + label : ""}`);
       // the vehicle rides inside the first case, so it does not run as a case
       // of its own and duplicate the results at its deck's own angles
-      if (ci === from && embedText) {
-        bodyL.push(embedText);
-        if (CB.plot) bodyL.push("PLOT");     // run-wide card, once per file
+      if (ci === from) {
+        if (embedText) bodyL.push(embedText);
+        // PLOT, FORMAT and WRITE are effective for a whole run, not one case,
+        // so they are written once per file rather than repeated like DAMP
+        if (CB.plot) bodyL.push("PLOT");
+        if (CB.write) {
+          const wb = writeBlockNames();
+          bodyL.push("FORMAT (10E13.5)");
+          bodyL.push(`WRITE FLC,1,${WRITE_TABLES.FLC.to}`);
+          bodyL.push(`WRITE TOTALC,1,${WRITE_TABLES.TOTALC.to}`);
+          bodyL.push(`WRITE ${wb.stat},1,${WRITE_TABLES.static.to}`);
+          if (CB.damp) bodyL.push(`WRITE ${wb.dyn},1,${WRITE_TABLES.dyn.to}`);
+        }
       }
       ["FLTCON", "REFQ", "DEFLCT", "SYMFLP", "ASYFLP"].forEach(nl => {
         if (parts[nl] && parts[nl].length) { bodyL.push(nlBlock(nl, parts[nl])); nlCount++; }
@@ -3106,6 +3149,7 @@ document.getElementById("cbPartSel").onchange = e => {
 };
 document.getElementById("cbDamp").onchange = e => { CB.damp = e.target.checked; cbGenerate(); };
 document.getElementById("cbPlot").onchange = e => { CB.plot = e.target.checked; cbGenerate(); };
+document.getElementById("cbWrite").onchange = e => { CB.write = e.target.checked; cbGenerate(); };
 document.getElementById("cbEmbed").onchange = e => {
   CB.embed = e.target.checked;
   document.getElementById("cbReserve").disabled = CB.embed;   // counted, not guessed
