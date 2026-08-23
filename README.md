@@ -108,6 +108,16 @@ and a mis-ordered `SAVE` cannot silently carry a stale deflection forward. Only 
 geometry is inherited. Untick *Repeat every variable in each case* to emit just what
 changed between consecutive cases, which produces a much shorter file.
 
+Tick **DAMP in every case** to compute dynamic derivatives. The card has to be repeated
+per case — the manual is explicit that it "is effective only for the case in which it
+appears" — so ticking it emits `DAMP` in each one rather than only at the top. It is a
+control card, not a namelist, so it does not count against the 300.
+
+Later manuals state that damping derivatives are not computed when `PHI` or `BETA` is
+non-zero. The 1997 manual does not mention it either way, so the builder raises it as a
+caution rather than a fact when you combine `DAMP` with a `PHI` or `BETA` sweep. Worth
+checking one case before trusting the dynamic derivatives across a whole roll sweep.
+
 ### Sweeps that exceed the 300-namelist limit
 
 Once `SAVE` is in effect a run may read at most 300 namelists, and the geometry case ahead

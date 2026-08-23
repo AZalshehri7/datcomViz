@@ -254,6 +254,7 @@
         <div id="cbBar">
           <span id="cbSummary"></span>
           <label class="chk" style="font-size:11.5px"><input type="checkbox" id="cbRepeat" checked> Repeat every variable in each case</label>
+          <label class="chk" style="font-size:11.5px" title="DAMP is effective only for the case it appears in, so it has to be repeated in every case to get dynamic derivatives throughout the sweep."><input type="checkbox" id="cbDamp"> DAMP in every case</label>
           <label class="chk" style="font-size:11.5px" title="A run may read at most 300 namelists once SAVE is in effect. Split the sweep across files so every case still gets run."><input type="checkbox" id="cbSplit" checked> Split over the 300 limit</label>
           <span class="sub" style="font-size:11px">reserve <input type="text" id="cbReserve" value="12" style="width:38px;text-align:right;padding:2px 4px;font-size:11px"> for geometry</span>
           <select id="cbPartSel" style="display:none;width:auto;padding:3px 6px;font-size:11.5px"></select>
@@ -2387,7 +2388,7 @@ function buildContourOverlay(body, warn) {
                      all arrays, so almost nothing needs a second case.
    ======================================================================= */
 
-const CB = { form: "missile", vars: [], loop: 2, repeat: true, split: true, reserve: 12 };
+const CB = { form: "missile", vars: [], loop: 2, repeat: true, split: true, reserve: 12, damp: false };
 let CB_FILES = [], cbPart = 0;
 
 /* ---- value formatting ---------------------------------------------------- */
@@ -2533,7 +2534,8 @@ function cbSave() {
       return o;
     });
     localStorage.setItem(CB_KEY, JSON.stringify({ form: CB.form, loop: CB.loop, repeat: CB.repeat,
-                                                  split: CB.split, reserve: CB.reserve, vars }));
+                                                  split: CB.split, reserve: CB.reserve,
+                                                  damp: CB.damp, vars }));
   } catch (e) { /* storage disabled or full — the builder still works */ }
 }
 function cbRestore() {
@@ -2545,6 +2547,7 @@ function cbRestore() {
   CB.repeat = st.repeat !== false;
   CB.split = st.split !== false;
   CB.reserve = isNum(st.reserve) ? st.reserve : 12;
+  CB.damp = st.damp === true;
   CB.vars = cbSpec(CB.form);
   st.vars.filter(v => v.defl && /^DELTA[1-9]$/.test(v.name || "")).forEach(v =>
     CB.vars.push(cbDeflSpec([{ n: +v.name.slice(5), panels: clamp(v.panels || 1, 1, 8) }])[0]));
@@ -2559,6 +2562,7 @@ function cbRestore() {
   if (box) box.checked = CB.repeat;
   const sp = document.getElementById("cbSplit"); if (sp) sp.checked = CB.split;
   const rv = document.getElementById("cbReserve"); if (rv) rv.value = String(CB.reserve);
+  const dp = document.getElementById("cbDamp"); if (dp) dp.checked = CB.damp;
   return true;
 }
 function cbForget() {
@@ -2754,6 +2758,16 @@ function cbGenerate() {
     if (alphaV._vals.some(a => a < -1e-9))
       warns.push(`this sweep pairs a non-zero BETA with negative alpha. Total angle of attack is always positive, so negative alpha has to be carried as a roll angle past 90 degrees, which a single arctangent cannot recover; expect wrong signs or NaN. Run those points as ALPHA with PHI instead.`);
   }
+  // The 2011 manual states damping derivatives are not computed when PHI or
+  // BETA is non-zero. The 1997 manual does not say so either way, so raise it
+  // as a caution rather than a fact about this build.
+  if (CB.damp) {
+    const nz = on.filter(v => (v.key === "phi" || v.key === "beta") && v._vals.some(x => Math.abs(x) > 1e-9))
+                  .map(v => v.name);
+    if (nz.length)
+      warns.push(`DAMP is on and ${nz.join(" and ")} is non-zero in part of this sweep. Later manuals state that damping derivatives are not computed when PHI or BETA is non-zero; the 1997 manual does not mention it, so check one case before relying on the dynamic derivatives across the whole matrix.`);
+  }
+
   // At zero total incidence the roll angle has no meaning, so an ALPHA of 0
   // is the same flight condition in every PHI case.
   const phiV = on.find(v => v.key === "phi");
@@ -2851,6 +2865,8 @@ function cbGenerate() {
       ["FLTCON", "REFQ", "DEFLCT", "SYMFLP", "ASYFLP"].forEach(nl => {
         if (parts[nl] && parts[nl].length) { bodyL.push(nlBlock(nl, parts[nl])); nlCount++; }
       });
+      // DAMP is effective only for the case it appears in, so repeat it
+      if (CB.damp) bodyL.push("DAMP");
       if (ci < to - 1) { if (useSave) bodyL.push("SAVE"); bodyL.push("NEXT CASE"); }
     }
 
@@ -2960,6 +2976,7 @@ document.getElementById("cbPartSel").onchange = e => {
   cbPart = +e.target.value;
   document.getElementById("cbOut").textContent = CB_FILES[cbPart].text;
 };
+document.getElementById("cbDamp").onchange = e => { CB.damp = e.target.checked; cbGenerate(); };
 document.getElementById("cbSplit").onchange = e => {
   CB.split = e.target.checked; cbPart = 0; cbGenerate();
 };
