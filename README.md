@@ -125,7 +125,9 @@ of the sweep counts toward that. Rather than telling you to cut the sweep down, 
 divides it into as many files as it takes, so **every case still gets run**.
 
 Each file is a complete, independent run: its first case restates every swept variable in
-full, even in compact mode, so nothing depends on a preceding file. Paste each one under
+full, even in compact mode, so nothing depends on a preceding file, and every case is
+closed with `NEXT CASE` — that card is what makes a case execute, so the last one in a
+file needs it as much as the rest. Paste each one under
 the same geometry deck and run them separately. The header of each says which part it is
 and which cases it holds, files are named `datcom-cases-2of5.dat`, and a part picker plus
 **Download all parts** sit in the toolbar.

@@ -2938,7 +2938,13 @@ function cbGenerate() {
       });
       // DAMP is effective only for the case it appears in, so repeat it
       if (CB.damp) bodyL.push("DAMP");
-      if (ci < to - 1) { if (useSave) bodyL.push("SAVE"); bodyL.push("NEXT CASE"); }
+      // NEXT CASE is what makes a case run. The manual: it "indicates
+      // termination of the case input data and instructs the program to begin
+      // case execution ... must be the last card input for the case." Leaving
+      // it off the final case of a file means that case is read and never
+      // executed. SAVE is only needed between cases, so the last one skips it.
+      if (ci < to - 1 && useSave) bodyL.push("SAVE");
+      bodyL.push("NEXT CASE");
     }
 
     const L = [];
