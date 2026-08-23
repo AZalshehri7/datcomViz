@@ -254,9 +254,13 @@
         <div id="cbBar">
           <span id="cbSummary"></span>
           <label class="chk" style="font-size:11.5px"><input type="checkbox" id="cbRepeat" checked> Repeat every variable in each case</label>
+          <label class="chk" style="font-size:11.5px" title="A run may read at most 300 namelists once SAVE is in effect. Split the sweep across files so every case still gets run."><input type="checkbox" id="cbSplit" checked> Split over the 300 limit</label>
+          <span class="sub" style="font-size:11px">reserve <input type="text" id="cbReserve" value="12" style="width:38px;text-align:right;padding:2px 4px;font-size:11px"> for geometry</span>
+          <select id="cbPartSel" style="display:none;width:auto;padding:3px 6px;font-size:11.5px"></select>
           <button id="cbReset" title="Clear the saved builder setup in this browser">Reset</button>
           <button id="cbCopy">Copy</button>
           <button id="cbDl">Download .dat</button>
+          <button id="cbDlAll" style="display:none">Download all parts</button>
         </div>
         <div id="cbWarn"></div>
         <pre id="cbOut"></pre>
@@ -2383,7 +2387,8 @@ function buildContourOverlay(body, warn) {
                      all arrays, so almost nothing needs a second case.
    ======================================================================= */
 
-const CB = { form: "missile", vars: [], loop: 2, repeat: true };
+const CB = { form: "missile", vars: [], loop: 2, repeat: true, split: true, reserve: 12 };
+let CB_FILES = [], cbPart = 0;
 
 /* ---- value formatting ---------------------------------------------------- */
 function fmtF(v) {                                  // Fortran real literal
@@ -2527,7 +2532,8 @@ function cbSave() {
       CB_FIELDS.forEach(k => { if (v[k] !== undefined) o[k] = v[k]; });
       return o;
     });
-    localStorage.setItem(CB_KEY, JSON.stringify({ form: CB.form, loop: CB.loop, repeat: CB.repeat, vars }));
+    localStorage.setItem(CB_KEY, JSON.stringify({ form: CB.form, loop: CB.loop, repeat: CB.repeat,
+                                                  split: CB.split, reserve: CB.reserve, vars }));
   } catch (e) { /* storage disabled or full — the builder still works */ }
 }
 function cbRestore() {
@@ -2537,6 +2543,8 @@ function cbRestore() {
   CB.form = st.form === "digital" ? "digital" : "missile";
   CB.loop = isNum(st.loop) ? st.loop : 2;
   CB.repeat = st.repeat !== false;
+  CB.split = st.split !== false;
+  CB.reserve = isNum(st.reserve) ? st.reserve : 12;
   CB.vars = cbSpec(CB.form);
   st.vars.filter(v => v.defl && /^DELTA[1-9]$/.test(v.name || "")).forEach(v =>
     CB.vars.push(cbDeflSpec([{ n: +v.name.slice(5), panels: clamp(v.panels || 1, 1, 8) }])[0]));
@@ -2549,6 +2557,8 @@ function cbRestore() {
   });
   const box = document.getElementById("cbRepeat");
   if (box) box.checked = CB.repeat;
+  const sp = document.getElementById("cbSplit"); if (sp) sp.checked = CB.split;
+  const rv = document.getElementById("cbReserve"); if (rv) rv.value = String(CB.reserve);
   return true;
 }
 function cbForget() {
@@ -2790,70 +2800,132 @@ function cbGenerate() {
     return;
   }
 
-  // ---- emit the cases first, counting the namelists actually written -------
-  const bodyL = [];
-  let nlCount = 0;
-  const prev = {};
+  // ---- work out how the cases divide into runs ----------------------------
+  // A run reads at most 300 namelists once SAVE is in effect, and the geometry
+  // case ahead of this block counts toward that. Size the split on the fully
+  // restated case, so a compact run is always comfortably under.
   const useSave = CB.form === "missile";     // BODY/SYNTHS decks retain inputs on their own
-  combos.forEach((combo, ci) => {
-    // One path for every case: build the complete set of sweep namelists, so
-    // each case stands on its own for everything being swept. Only the vehicle
-    // is inherited, via SAVE.
-    const parts = {};                                // namelist -> [{name, vals}]
-    const add = (nl, name, vals) => { (parts[nl] = parts[nl] || []).push({ name, vals }); };
+  const nlSet = new Set();
+  arrays.concat(caseVars).forEach(v => nlSet.add(v.nl));
+  if (CB.form === "digital") nlSet.add("FLTCON");
+  const perCase = Math.max(1, nlSet.size);
+  const reserve = clamp(Math.round(CB.reserve), 0, 250);
+  const capacity = Math.max(1, Math.floor((300 - reserve) / perCase));
+  const splitting = useSave && CB.split && combos.length > capacity;
+  const nFiles = splitting ? Math.ceil(combos.length / capacity) : 1;
+  const perFile = splitting ? capacity : combos.length;
 
-    arrays.forEach(v => {
-      if (v.count_name) add(v.nl, v.count_name, [fmtF(v._vals.length)]);
-      add(v.nl, v.name, collapse(v._vals));
-      if (v.mirror) add(v.nl, v.mirror, collapse(v._vals.map(x => -x)));
-    });
-    if (CB.form === "digital") add("FLTCON", "LOOP", [fmtF(CB.loop)]);
-    caseVars.forEach((v, i) => {
-      add(v.nl, v.name, v.defl ? v.pattern.map(pv => fmtF(pv * combo[i])) : [fmtF(combo[i])]);
-    });
+  /** Emit one run: cases [from, to), self-contained for every swept variable. */
+  const emitRun = (from, to, part) => {
+    const bodyL = [];
+    let nlCount = 0;
+    const prev = {};                          // reset per run, so each file stands alone
+    for (let ci = from; ci < to; ci++) {
+      const combo = combos[ci];
+      const parts = {};                       // namelist -> [{name, vals}]
+      const add = (nl, name, vals) => { (parts[nl] = parts[nl] || []).push({ name, vals }); };
 
-    // compact mode drops any assignment identical to the previous case
-    if (!CB.repeat) Object.keys(parts).forEach(nl => {
-      parts[nl] = parts[nl].filter(pt => {
-        const k = nl + "." + pt.name, txt = pt.vals.join(",");
-        if (prev[k] === txt) return false;
-        prev[k] = txt; return true;
+      arrays.forEach(v => {
+        if (v.count_name) add(v.nl, v.count_name, [fmtF(v._vals.length)]);
+        add(v.nl, v.name, collapse(v._vals));
+        if (v.mirror) add(v.nl, v.mirror, collapse(v._vals.map(x => -x)));
       });
-    });
+      if (CB.form === "digital") add("FLTCON", "LOOP", [fmtF(CB.loop)]);
+      caseVars.forEach((v, i) => {
+        add(v.nl, v.name, v.defl ? v.pattern.map(pv => fmtF(pv * combo[i])) : [fmtF(combo[i])]);
+      });
 
-    const label = caseVars.map((v, i) => `${v.name}=${fmtF(combo[i])}`).join(" ");
-    bodyL.push(`CASEID ${ci + 1}/${combos.length}${label ? "  " + label : ""}`);
-    ["FLTCON", "REFQ", "DEFLCT", "SYMFLP", "ASYFLP"].forEach(nl => {
-      if (parts[nl] && parts[nl].length) { bodyL.push(nlBlock(nl, parts[nl])); nlCount++; }
-    });
-    if (ci < combos.length - 1) { if (useSave) bodyL.push("SAVE"); bodyL.push("NEXT CASE"); }
-  });
+      // compact mode drops assignments identical to the previous case, but never
+      // for the first case of a run, which has nothing to inherit from
+      if (!CB.repeat && ci > from) Object.keys(parts).forEach(nl => {
+        parts[nl] = parts[nl].filter(pt => {
+          const k = nl + "." + pt.name, txt = pt.vals.join(",");
+          if (prev[k] === txt) return false;
+          prev[k] = txt; return true;
+        });
+      });
+      Object.keys(parts).forEach(nl => parts[nl].forEach(pt => { prev[nl + "." + pt.name] = pt.vals.join(","); }));
 
-  // The 300-namelist ceiling is scoped to SAVE, so it only bites on the form
-  // that needs SAVE. Count what was actually emitted rather than estimating,
-  // and only offer the compact switch when it is still available.
-  if (useSave && nlCount > 300) {
-    const fix = CB.repeat
-      ? ' Untick "repeat every variable in each case" to cut this down, and split the run if it is still over.'
-      : " Split it into separate runs.";
-    warns.push(`this sweep writes ${nlCount} namelists across ${combos.length} cases; with SAVE in effect DATCOM reads at most 300 in one run.${fix}`);
+      const label = caseVars.map((v, i) => `${v.name}=${fmtF(combo[i])}`).join(" ");
+      bodyL.push(`CASEID ${ci + 1}/${combos.length}${label ? "  " + label : ""}`);
+      ["FLTCON", "REFQ", "DEFLCT", "SYMFLP", "ASYFLP"].forEach(nl => {
+        if (parts[nl] && parts[nl].length) { bodyL.push(nlBlock(nl, parts[nl])); nlCount++; }
+      });
+      if (ci < to - 1) { if (useSave) bodyL.push("SAVE"); bodyL.push("NEXT CASE"); }
+    }
+
+    const L = [];
+    L.push("*  DATCOM case sweep — generated by datcomViz  ·  datcom.aero-dev.com");
+    if (nFiles > 1) L.push(`*  PART ${part} OF ${nFiles} — cases ${from + 1} to ${to} of ${combos.length}.`);
+    L.push("*  Paste below an existing deck. The case before this block must define");
+    L.push("*  the geometry" + (useSave
+      ? " and end with a SAVE card so these cases inherit it." : "."));
+    if (nFiles > 1)
+      L.push("*  Every part is a separate run and needs the same geometry ahead of it.");
+    if (CB.repeat) L.push("*  Every case restates all swept variables, so each stands on its own.");
+    L.push("*");
+    L.push(`*  ${to - from} case(s)` + (nPts ? `, ${nPts} alpha x Mach points each` : "") +
+           `, ${nlCount} namelist${nlCount === 1 ? "" : "s"}` +
+           (useSave ? ` (+ ${reserve} reserved for geometry = ${nlCount + reserve} of 300)` : ""));
+    warns.forEach(w => L.push("*  NOTE: " + w));
+    L.push("*");
+    L.push.apply(L, bodyL);
+    return { text: L.join("\n") + "\n", cases: to - from, nl: nlCount };
+  };
+
+  // sizing warnings, raised before the runs are written so they land in every header
+  if (useSave && !CB.split && combos.length * perCase + reserve > 300)
+    warns.push(`this sweep writes about ${combos.length * perCase + reserve} namelists in one run against a limit of 300. Tick "split over the 300 limit" to divide it into runs that each fit, keeping every case.`);
+  if (splitting)
+    warns.push(`${combos.length} cases at ${perCase} namelist${perCase === 1 ? "" : "s"} each exceed what one run may read, so this is split into ${nFiles} files of up to ${capacity} cases. Run each against the same geometry deck.`);
+
+  CB_FILES = [];
+  for (let i = 0, from = 0; from < combos.length; i++, from += perFile) {
+    const to = Math.min(from + perFile, combos.length);
+    const r = emitRun(from, to, i + 1);
+    CB_FILES.push(Object.assign(r, {
+      name: nFiles > 1 ? `datcom-cases-${i + 1}of${nFiles}.dat` : "datcom-cases.dat",
+    }));
   }
+  const nlTotal = CB_FILES.reduce((a, f) => a + f.nl, 0);
 
-  const L = [];
-  L.push("*  DATCOM case sweep — generated by datcomViz  ·  datcom.aero-dev.com");
-  L.push("*  Paste below an existing deck. The case before this block must define");
-  L.push("*  the geometry" + (CB.form === "missile"
-    ? " and end with a SAVE card so these cases inherit it." : "."));
-  if (CB.repeat) L.push("*  Every case restates all swept variables, so each stands on its own.");
-  L.push("*");
-  L.push(`*  ${combos.length} case(s)` + (nPts ? `, ${nPts} alpha x Mach points each` : "") +
-         `, ${nlCount} namelist${nlCount === 1 ? "" : "s"}`);
-  warns.forEach(w => L.push("*  NOTE: " + w));
-  L.push("*");
-  L.push.apply(L, bodyL);
+  sum.innerHTML = `<b>${combos.length}</b> case${combos.length === 1 ? "" : "s"}` +
+    (nPts ? ` · <b>${nPts}</b> α×Mach points each · <b>${combos.length * nPts}</b> total` : "") +
+    ` · <b>${nlTotal}</b> namelist${nlTotal === 1 ? "" : "s"}` +
+    (CB_FILES.length > 1 ? ` in <b>${CB_FILES.length}</b> files` : "");
+
+  cbPart = clamp(cbPart, 0, CB_FILES.length - 1);
+  cbSyncParts();
   cbBanner([], warns);
-  out.textContent = L.join("\n") + "\n";
+  out.textContent = CB_FILES[cbPart].text;
   cbSave();
+}
+
+/** Show the part picker and the download-all button only when there is a split. */
+function cbSyncParts() {
+  const sel = document.getElementById("cbPartSel"), all = document.getElementById("cbDlAll");
+  const many = CB_FILES.length > 1;
+  sel.style.display = many ? "" : "none";
+  all.style.display = many ? "" : "none";
+  if (!many) return;
+  sel.innerHTML = "";
+  CB_FILES.forEach((f, i) => {
+    const o = document.createElement("option");
+    o.value = i;
+    o.textContent = `Part ${i + 1} of ${CB_FILES.length} — ${f.cases} cases, ${f.nl} namelists`;
+    if (i === cbPart) o.selected = true;
+    sel.appendChild(o);
+  });
+}
+
+/** Save one generated run to disk. */
+function cbDownload(f) {
+  const blob = new Blob([f.text], { type: "text/plain" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = f.name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
 }
 
 /* ---- wiring -------------------------------------------------------------- */
@@ -2871,18 +2943,31 @@ document.getElementById("tab-case").onclick = () => cbShow("case");
 document.getElementById("cbRepeat").onchange = e => { CB.repeat = e.target.checked; cbGenerate(); };
 document.getElementById("cbReset").onclick = cbForget;
 document.getElementById("cbCopy").onclick = () => {
-  const t = document.getElementById("cbOut").textContent;
+  const t = CB_FILES[cbPart] ? CB_FILES[cbPart].text : document.getElementById("cbOut").textContent;
   navigator.clipboard.writeText(t).then(() => {
     const b = document.getElementById("cbCopy"); const o = b.textContent;
     b.textContent = "Copied"; setTimeout(() => { b.textContent = o; }, 1200);
   });
 };
 document.getElementById("cbDl").onclick = () => {
-  const blob = new Blob([document.getElementById("cbOut").textContent], { type: "text/plain" });
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob);
-  a.download = "datcom-cases.dat"; a.click();
-  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  if (CB_FILES[cbPart]) cbDownload(CB_FILES[cbPart]);
+};
+document.getElementById("cbDlAll").onclick = () => {
+  // browsers throttle back-to-back saves, so space them out
+  CB_FILES.forEach((f, i) => setTimeout(() => cbDownload(f), i * 350));
+};
+document.getElementById("cbPartSel").onchange = e => {
+  cbPart = +e.target.value;
+  document.getElementById("cbOut").textContent = CB_FILES[cbPart].text;
+};
+document.getElementById("cbSplit").onchange = e => {
+  CB.split = e.target.checked; cbPart = 0; cbGenerate();
+};
+document.getElementById("cbReserve").onchange = e => {
+  const n = parseInt(e.target.value, 10);
+  CB.reserve = isFinite(n) ? clamp(n, 0, 250) : 12;
+  e.target.value = String(CB.reserve);
+  cbPart = 0; cbGenerate();
 };
 
 /* ---------- notes panel --------------------------------------------------- */

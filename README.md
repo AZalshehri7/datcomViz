@@ -108,6 +108,23 @@ and a mis-ordered `SAVE` cannot silently carry a stale deflection forward. Only 
 geometry is inherited. Untick *Repeat every variable in each case* to emit just what
 changed between consecutive cases, which produces a much shorter file.
 
+### Sweeps that exceed the 300-namelist limit
+
+Once `SAVE` is in effect a run may read at most 300 namelists, and the geometry case ahead
+of the sweep counts toward that. Rather than telling you to cut the sweep down, the builder
+divides it into as many files as it takes, so **every case still gets run**.
+
+Each file is a complete, independent run: its first case restates every swept variable in
+full, even in compact mode, so nothing depends on a preceding file. Paste each one under
+the same geometry deck and run them separately. The header of each says which part it is
+and which cases it holds, files are named `datcom-cases-2of5.dat`, and a part picker plus
+**Download all parts** sit in the toolbar.
+
+The *reserve for geometry* box is how many namelists your geometry case uses — that many
+are held back from the 300. The split is sized on the fully restated case, so a compact run
+comes out comfortably under rather than exactly at the limit. Untick **Split over the 300
+limit** to get a single file regardless, and a warning instead.
+
 Your builder setup is kept in this browser's local storage, so a sweep survives a reload;
 **Reset** clears it. The deck itself is never stored. Loading a deck re-seeds the builder
 from it.
