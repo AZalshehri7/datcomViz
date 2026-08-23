@@ -251,16 +251,21 @@ Every variable occupies a fixed **20-element** slot, one per angle of attack, wh
 | 161–180 | `CAR` | | 361–380 | `CNAD` |
 | 181–200 | `CYR` | | 381–400 | `CMAD` |
 
-**Table 25 — flight conditions, `FLC`, elements 1–145**
+**Table 25 — flight conditions, `FLC`, elements 1–144**
 
 | Elements | Variable | | Elements | Variable |
 |---|---|---|---|---|
-| 1 | `NALPHA` | | 45–65 | `ALT` |
-| 2–21 | `ALPHA` | | 66–85 | `REN` |
-| 22 | `BETA` | | 86–105 | `VINF` |
-| 23 | `PHI` | | 106–125 | `TINF` |
-| 24 | `NMACH` | | 126–145 | `PINF` |
+| 1 | `NALPHA` | | 45–64 | `ALT` |
+| 2–21 | `ALPHA` | | 65–84 | `REN` |
+| 22 | `BETA` | | 85–104 | `VINF` |
+| 23 | `PHI` | | 105–124 | `TINF` |
+| 24 | `NMACH` | | 125–144 | `PINF` |
 | 25–44 | `MACH` | | | |
+
+> The manual's Table 25 gives `ALT` as 45–65 and `REN` as 66–85, totalling 145. A real
+> dump disagrees: it writes **144** values and puts `REN(1)` at element **65**, so `ALT`
+> is 45–64 and everything after it shifts down one. The layout above is the corrected one.
+> Ask for 145 and the extra element is not there.
 
 **Table 26 — attitude, `TOTALC`, elements 1–80**
 
@@ -270,6 +275,12 @@ Every variable occupies a fixed **20-element** slot, one per angle of attack, wh
 | 21–40 | `BBETA` — body-axis sideslip |
 | 41–60 | `BPHI` — body-axis roll |
 | 61–80 | `ALPTOT` — total angle of attack |
+
+A block name that does not match the vehicle is **not** an error. `WRITE SB1234` against a
+two-fin-set deck writes all 220 values as zero and says nothing, so check the fin-set count
+matches the deck you actually run — the generated file states which configuration it
+assumes. Unused slots inside a populated block read as `1.0E-30`, the initialised value,
+which is distinct from a genuine zero.
 
 `FLC` carries `BETA` and `PHI` per case, so a roll or sideslip sweep stays identifiable
 in the dump without matching results back by case order. The `FORMAT` card takes a Fortran

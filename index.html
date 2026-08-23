@@ -2548,7 +2548,10 @@ function deckGeometryText() {
  * Extents are the array lengths in Tables 21, 22, 25 and 26 of the manual.
  */
 const WRITE_TABLES = {
-  FLC:    { to: 145, what: "flight conditions: NALPHA, ALPHA, BETA, PHI, NMACH, MACH, ALT, REN, VINF, TINF, PINF" },
+  // 144, not the 145 the manual's Table 25 implies: it gives ALT as 45-65,
+  // but a real dump puts REN(1) at element 65, so ALT is 45-64 and everything
+  // after it shifts down one. The block writes 144 values.
+  FLC:    { to: 144, what: "flight conditions: NALPHA, ALPHA, BETA, PHI, NMACH, MACH, ALT, REN, VINF, TINF, PINF" },
   TOTALC: { to: 80,  what: "attitude: BALPHA, BBETA, BPHI, ALPTOT" },
   static: { to: 220, what: "static: CN, CM, CA, CY, CLN, CLL, CNA, CMA, CYB, CNB, CLB" },
   dyn:    { to: 400, what: "dynamic: CNQ, CMQ, CAQ, CYQ, CLNQ, CLLQ, CNR..CLLR, CNP..CLLP, CNAD, CMAD" },
@@ -3017,6 +3020,11 @@ function cbGenerate() {
         if (CB.plot) bodyL.push("PLOT");
         if (CB.write) {
           const wb = writeBlockNames();
+          // a block name that does not match the vehicle is not an error: the
+          // block is written in full and every value comes back zero
+          bodyL.push(`*  WRITE blocks below assume ${wb.n ? "body + " + wb.n + " fin set" + (wb.n === 1 ? "" : "s") : "body alone"}.`);
+          bodyL.push("*  If the deck run against them has a different number of fin sets,");
+          bodyL.push("*  those blocks come back all zero rather than reporting an error.");
           bodyL.push("FORMAT (10E13.5)");
           bodyL.push(`WRITE FLC,1,${WRITE_TABLES.FLC.to}`);
           bodyL.push(`WRITE TOTALC,1,${WRITE_TABLES.TOTALC.to}`);
