@@ -138,9 +138,13 @@ geometry is copied verbatim, so comments, the `DIM` card and any control cards s
 The *reserve for geometry* box is how many namelists the geometry case ahead of the sweep
 uses; that many are held back from the 300. It is **counted from the loaded deck** rather
 than guessed, and goes read-only once the geometry is embedded, since it is then known
-exactly. The split is sized on the fully restated case, so a compact run comes out
-comfortably under rather than exactly at the limit. Untick **Split over the 300 limit** to
-get a single file regardless, and a warning instead.
+exactly.
+
+Cases are packed by what they actually cost. In compact mode a case writes only what
+changed since the one before it, so more of them fit and you get fewer files — an 861-case
+sweep needs six files fully restated and four compact. The first case of every file is
+always written out in full, so no file depends on another whichever mode you use. Untick
+**Split over the 300 limit** to get a single file regardless, and a warning instead.
 
 Loading a deck does not disturb a sweep you have already set up — only the reserve is
 refreshed, since that is a property of the deck rather than a choice you made.

@@ -2862,10 +2862,54 @@ function cbGenerate() {
   const reserve = embedText ? (deckGeometryNL() || 0) : clamp(Math.round(CB.reserve), 0, 250);
   if (CB.embed && !embedText)
     warns.push("include geometry is ticked but no deck is loaded, so the files carry sweep cases only. Drop a deck on the sidebar to have its geometry written into each one.");
-  const capacity = Math.max(1, Math.floor((300 - reserve) / perCase));
-  const splitting = useSave && CB.split && combos.length > capacity;
-  const nFiles = splitting ? Math.ceil(combos.length / capacity) : 1;
-  const perFile = splitting ? capacity : combos.length;
+  const budget = Math.max(perCase, 300 - reserve);
+
+  // ---- pack the cases into runs -------------------------------------------
+  // In compact mode a case costs only what changed since the one before it, and
+  // the first case of a run always costs the full set. So the number that fit
+  // is not a fixed capacity; walk the cases and close a run when the next one
+  // would not fit. Packing and emission share partsOf, so the counts agree.
+  const partsOf = combo => {
+    const parts = {};
+    const add = (nl, name, vals) => { (parts[nl] = parts[nl] || []).push({ name, vals }); };
+    arrays.forEach(v => {
+      if (v.count_name) add(v.nl, v.count_name, [fmtF(v._vals.length)]);
+      add(v.nl, v.name, collapse(v._vals));
+      if (v.mirror) add(v.nl, v.mirror, collapse(v._vals.map(x => -x)));
+    });
+    if (CB.form === "digital") add("FLTCON", "LOOP", [fmtF(CB.loop)]);
+    caseVars.forEach((v, i) => {
+      add(v.nl, v.name, v.defl ? v.pattern.map(pv => fmtF(pv * combo[i])) : [fmtF(combo[i])]);
+    });
+    return parts;
+  };
+  const key = (nl, pt) => nl + "." + pt.name;
+  const countAll = parts => Object.keys(parts).filter(nl => parts[nl].length).length;
+  const countDiff = (parts, prev) => Object.keys(parts)
+    .filter(nl => parts[nl].some(pt => prev[key(nl, pt)] !== pt.vals.join(","))).length;
+  const recordPrev = (parts, prev) => Object.keys(parts)
+    .forEach(nl => parts[nl].forEach(pt => { prev[key(nl, pt)] = pt.vals.join(","); }));
+
+  const runs = [];
+  if (!useSave || !CB.split) {
+    runs.push({ from: 0, to: combos.length });
+  } else {
+    let from = 0, nl = 0, prev = {};
+    for (let ci = 0; ci < combos.length; ci++) {
+      const parts = partsOf(combos[ci]);
+      const first = ci === from;
+      let cost = (first || CB.repeat) ? countAll(parts) : countDiff(parts, prev);
+      if (!first && nl + cost > budget) {        // close this run, restart in full
+        runs.push({ from, to: ci });
+        from = ci; nl = 0; prev = {};
+        cost = countAll(parts);
+      }
+      nl += cost;
+      recordPrev(parts, prev);
+    }
+    runs.push({ from, to: combos.length });
+  }
+  const nFiles = runs.length;
 
   /** Emit one run: cases [from, to), self-contained for every swept variable. */
   const emitRun = (from, to, part) => {
@@ -2874,18 +2918,7 @@ function cbGenerate() {
     const prev = {};                          // reset per run, so each file stands alone
     for (let ci = from; ci < to; ci++) {
       const combo = combos[ci];
-      const parts = {};                       // namelist -> [{name, vals}]
-      const add = (nl, name, vals) => { (parts[nl] = parts[nl] || []).push({ name, vals }); };
-
-      arrays.forEach(v => {
-        if (v.count_name) add(v.nl, v.count_name, [fmtF(v._vals.length)]);
-        add(v.nl, v.name, collapse(v._vals));
-        if (v.mirror) add(v.nl, v.mirror, collapse(v._vals.map(x => -x)));
-      });
-      if (CB.form === "digital") add("FLTCON", "LOOP", [fmtF(CB.loop)]);
-      caseVars.forEach((v, i) => {
-        add(v.nl, v.name, v.defl ? v.pattern.map(pv => fmtF(pv * combo[i])) : [fmtF(combo[i])]);
-      });
+      const parts = partsOf(combo);
 
       // compact mode drops assignments identical to the previous case, but never
       // for the first case of a run, which has nothing to inherit from
@@ -2940,17 +2973,14 @@ function cbGenerate() {
   // sizing warnings, raised before the runs are written so they land in every header
   if (useSave && !CB.split && combos.length * perCase + reserve > 300)
     warns.push(`this sweep writes about ${combos.length * perCase + reserve} namelists in one run against a limit of 300. Tick "split over the 300 limit" to divide it into runs that each fit, keeping every case.`);
-  if (splitting)
-    warns.push(`${combos.length} cases at ${perCase} namelist${perCase === 1 ? "" : "s"} each exceed what one run may read, so this is split into ${nFiles} files of up to ${capacity} cases. Run each against the same geometry deck.`);
+  if (nFiles > 1)
+    warns.push(`${combos.length} cases exceed what one run may read, so this is split into ${nFiles} files of ${runs.map(r => r.to - r.from).join(", ")} cases.` +
+      (embedText ? " Each file carries the geometry and runs on its own."
+                 : " Run each against the same geometry deck."));
 
-  CB_FILES = [];
-  for (let i = 0, from = 0; from < combos.length; i++, from += perFile) {
-    const to = Math.min(from + perFile, combos.length);
-    const r = emitRun(from, to, i + 1);
-    CB_FILES.push(Object.assign(r, {
-      name: nFiles > 1 ? `datcom-cases-${i + 1}of${nFiles}.dat` : "datcom-cases.dat",
-    }));
-  }
+  CB_FILES = runs.map((r, i) => Object.assign(emitRun(r.from, r.to, i + 1), {
+    name: nFiles > 1 ? `datcom-cases-${i + 1}of${nFiles}.dat` : "datcom-cases.dat",
+  }));
   const nlTotal = CB_FILES.reduce((a, f) => a + f.nl, 0);
 
   sum.innerHTML = `<b>${combos.length}</b> case${combos.length === 1 ? "" : "s"}` +
