@@ -53,8 +53,13 @@ checks are missile-side only. Equivalents worth adding there:
   carry root incidence, but not twist, so on a strongly twisted wing the outboard end of a
   flap can sit slightly proud of the trailing edge. Documented in the README under
   Approximations.
-- **OBJ or STL export** of the drawn configuration, for handoff to CAD or meshing. The
-  meshes already exist; only a writer is missing.
+- ~~**OBJ or STL export**~~ — done. Both, plus a per-panel deflection editor, in the
+  Export geometry panel. What is still missing is a **boolean union**: components come
+  out as closed solids but interpenetrate rather than being fused, so anything needing a
+  watertight model (printing, a CFD surface mesh) has to union them downstream. Also open:
+  mirrored lifting surfaces share the centreline edge loop between halves, jet nacelles
+  are uncapped tubes, and stacked `LUG`/`SHOE` members overlap — all documented, none
+  fixed.
 - **`for009` beyond the body.** Only the body contour is overlaid today. Fin pressure and
   geometry tapes (`for011`, `for021`) were not investigated.
 - **Only `DAMP` is offered as a control card.** `PART`, `BUILD`, `SOSE`, `HYPER`, `SPIN`

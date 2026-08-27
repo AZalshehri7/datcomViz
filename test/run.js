@@ -279,6 +279,188 @@ G("cases tab: a deck may seed more sets than the release has");
 }
 
 /* ========================================================================= */
+G("mesh export");
+{
+  const sb = H.load();
+  sb.__d = deck("minimal.dat");
+  sb.$('relSet("3/11", false); loadText(__d, "minimal.dat");');
+
+  const parts = JSON.parse(sb.$("JSON.stringify(harvestModel(false).map(p => p.name))"));
+  eq("one entry per drawn component", parts.length, 3);
+  check("named after the components", /^Body/.test(parts[0]) && /Fin set 1/.test(parts[1]));
+
+  const n = sb.$("exportTriCount(harvestModel(false))");
+  check("triangles were harvested", n > 1000, `got ${n}`);
+  eq("zero-area triangles are dropped", sb.$("(harvestModel(false), EXPORT_DROPPED > 0)"), true);
+
+  // binary STL: 84-byte header then 50 bytes a triangle, count in the header
+  const buf = Buffer.from(sb.$('stlBinary(harvestModel(false), "t")'));
+  const declared = buf.readUInt32LE(80);
+  eq("binary STL declares the triangle count", declared, n);
+  eq("binary STL is exactly the right length", buf.length, 84 + n * 50);
+
+  let zeroNormals = 0, nonFinite = 0;
+  const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+  for (let t = 0; t < declared; t++) {
+    const o = 84 + t * 50;
+    if (Math.hypot(buf.readFloatLE(o), buf.readFloatLE(o + 4), buf.readFloatLE(o + 8)) < 0.5) zeroNormals++;
+    for (let k = 0; k < 9; k++) {
+      const x = buf.readFloatLE(o + 12 + k * 4);
+      if (!isFinite(x)) nonFinite++;
+      const c = k % 3;
+      if (x < lo[c]) lo[c] = x;
+      if (x > hi[c]) hi[c] = x;
+    }
+  }
+  eq("no zero-length face normals survive", zeroNormals, 0);
+  eq("no non-finite vertices", nonFinite, 0);
+  // minimal.dat: nose 11.25 + centrebody 26.25 = 37.5 long, fin set 1 spans to 5.0
+  check("bounding box matches the deck",
+    Math.abs(lo[0]) < 1e-3 && Math.abs(hi[0] - 37.5) < 1e-3 &&
+    Math.abs(lo[1] + 5) < 1e-3 && Math.abs(hi[1] - 5) < 1e-3 &&
+    Math.abs(lo[2] + 5) < 1e-3 && Math.abs(hi[2] - 5) < 1e-3,
+    `X ${lo[0]}..${hi[0]}  Y ${lo[1]}..${hi[1]}  Z ${lo[2]}..${hi[2]}`);
+
+  const ascii = sb.$('stlAscii(harvestModel(false), "t")');
+  const facets = (ascii.match(/^\s*facet normal/gm) || []).length;
+  const verts = (ascii.match(/^\s*vertex/gm) || []).length;
+  eq("ASCII STL has the same facet count", facets, n);
+  eq("three vertices a facet", verts, facets * 3);
+  check("ASCII STL is closed", /^solid /.test(ascii) && /endsolid /.test(ascii.trim().split("\n").pop()));
+
+  const obj = sb.$('objText(harvestModel(false), "t", "IN")');
+  const objs = (obj.match(/^o /gm) || []).length;
+  const ov = (obj.match(/^v /gm) || []).length;
+  const of_ = (obj.match(/^f /gm) || []).length;
+  eq("OBJ keeps one object per component", objs, parts.length);
+  eq("OBJ face count matches", of_, n);
+  eq("OBJ vertex count matches", ov, of_ * 3);
+  check("OBJ object names are safe", (obj.match(/^o (.+)$/gm) || []).every(l => !/[^\w.\-o ]/.test(l)));
+  // faces are 1-based and must stay inside the vertex list
+  const maxIdx = Math.max(...(obj.match(/^f .*/gm) || []).flatMap(l =>
+    l.slice(2).split(/\s+/).map(Number)));
+  check("OBJ indices are 1-based and in range", maxIdx === ov, `max index ${maxIdx} of ${ov}`);
+  check("OBJ records the axes and units", /\+X aft/.test(obj) && /units: IN/.test(obj));
+
+  eq("the filename carries the deck and its units", sb.$("exportStem()"), "minimal-in");
+
+  // re-read the file per the STL spec rather than trusting the writer
+  const back = H.parseStl(sb.$('stlBinary(harvestModel(false), "t")'));
+  eq("re-reading the binary STL gives the same count", back.length, n);
+  eq("attribute byte count is zero throughout", back.every(t => t.attr === 0), true);
+  eq("every facet normal agrees with its winding", H.windingErrors(back), 0);
+}
+
+/* ========================================================================= */
+G("exported components are closed solids");
+{
+  // Not a claim about the model as a whole — parts interpenetrate and nothing
+  // fuses them. But each part going into a boolean union should be closed, or
+  // that union is ill posed.
+  const sb = H.load();
+  sb.__d = deck("minimal.dat");
+  sb.$('relSet("3/11", false); loadText(__d, "minimal.dat");');
+  for (const p of JSON.parse(sb.$("JSON.stringify(harvestModel(false).map(x => x.name))"))) {
+    sb.__n = p;
+    const tris = sb.$("harvestModel(false).find(x => x.name === __n).tris");
+    const c = H.edgeCensus(tris);
+    check(`${p} is closed`, c.closed, `${c.boundary} boundary, ${c.nonManifold} non-manifold edges`);
+  }
+}
+
+/* ========================================================================= */
+G("export honours the component toggles");
+{
+  const sb = H.load();
+  sb.__d = deck("minimal.dat");
+  sb.$('relSet("3/11", false); loadText(__d, "minimal.dat");');
+  const all = sb.$("exportTriCount(harvestModel(false))");
+  sb.$("PARTS[0].visible = false;");
+  const some = sb.$("exportTriCount(harvestModel(true))");
+  check("hiding a component drops it from the export", some < all && some > 0, `${some} of ${all}`);
+  eq("ignoring the toggles keeps everything", sb.$("exportTriCount(harvestModel(false))"), all);
+}
+
+/* ========================================================================= */
+G("per-panel deflection override");
+{
+  const sb = H.load();
+  sb.__d = deck("minimal.dat");
+  sb.$('relSet("3/11", false); loadText(__d, "minimal.dat");');
+  // a signature over the harvested vertices — the bounding box will not do,
+  // since rotating a panel about its span axis does not change the extents
+  const sig = n => sb.$(`(function () {
+    const p = harvestModel(false).find(x => /Fin set ${n}/.test(x.name));
+    let s = 0, i = 0;
+    for (const v of p.tris) s += v * Math.cos(i++);
+    return s.toFixed(6);
+  })()`);
+  const a1 = sig(1), a2 = sig(2);
+
+  eq("the editor finds both fin sets", sb.$("deflSetsForCase().length"), 2);
+  eq("with four panels each", sb.$("deflSetsForCase()[0].panels"), 4);
+
+  sb.$("DEFL_SET = { 1: [30, -30, 0, 0] }; rebuild();");
+  check("an override moves the panels it names", sig(1) !== a1);
+  check("and leaves the other set alone", sig(2) === a2);
+
+  sb.$("DEFL_SET = { 2: [10, 10, 10, 10] }; rebuild();");
+  check("overriding set 2 does not touch set 1", sig(1) === a1);
+  check("but does move set 2", sig(2) !== a2);
+
+  sb.$("DEFL_SET = null; rebuild();");
+  check("dropping the override restores the deck", sig(1) === a1 && sig(2) === a2);
+
+  // the override is a property of one deck's panels, not a global preference
+  sb.$("DEFL_SET = { 1: [30, 0, 0, 0] };");
+  sb.$('loadText(__d, "minimal.dat");');
+  eq("loading a deck clears it", sb.$("DEFL_SET === null"), true);
+
+  // the editor writes one input per panel, defaulting to the deck's own DELTAn
+  const inputs = [];
+  (function walk(e) { if (e.tagName === "INPUT") inputs.push(e); e.children.forEach(walk); })(
+    sb.document.getElementById("exDefl"));
+  eq("one input per panel", inputs.length, 8);
+  check("defaulting to the deck", inputs.every(i => i.value === "0"));
+}
+
+/* ========================================================================= */
+G("deflection scale is a viewing aid only");
+{
+  const sb = H.load();
+  sb.__d = deck("releases.dat");           // case 1 carries DELTA1 = 5, -5
+  sb.$('relSet("3/11", false); loadText(__d, "releases.dat");');
+  const sig = () => sb.$(`(function () {
+    const p = harvestModel(false).find(x => /Fin set 1/.test(x.name));
+    let s = 0, i = 0;
+    for (const v of p.tris) s += v * Math.cos(i++);
+    return s.toFixed(6);
+  })()`);
+  const drawn = sig();
+  sb.document.getElementById("defScale").value = "0.5";
+  sb.$("rebuild();");
+  check("the slider does change the drawing", sig() !== drawn);
+  sb.document.getElementById("defScale").value = "1";
+  sb.$("rebuild();");
+  check("and restores at 100%", sig() === drawn);
+
+  // but the export must not inherit it — the angles in the editor are the ask
+  sb.document.getElementById("defScale").value = "0.4";
+  sb.$("rebuild();");
+  const scaled = sig();
+  const exported = sb.$(`(function () {
+    const p = withTrueDeflection(() => harvestModel(false)).find(x => /Fin set 1/.test(x.name));
+    let s = 0, i = 0;
+    for (const v of p.tris) s += v * Math.cos(i++);
+    return s.toFixed(6);
+  })()`);
+  check("the export writes true angles regardless of the slider", exported === drawn,
+    `exported ${exported}, drawn-at-100% ${drawn}, drawn-at-40% ${scaled}`);
+  check("and the view is left where it was",
+    sb.document.getElementById("defScale").value === "0.4" && sig() === scaled);
+}
+
+/* ========================================================================= */
 if (REF) {
   const samples = path.join(REF, "samples");
 

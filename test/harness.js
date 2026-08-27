@@ -67,9 +67,37 @@ function mkEl(id, tag) {
   return el;
 }
 
-function makeSandbox() {
+/* Seed elements from the HTML they are declared with.
+ *
+ * The stub creates elements on demand, so without this every input reads back
+ * `value: ""` and `checked: false` — which silently turned the deflection
+ * scale into 0 and made anything downstream of it untestable. Only `value`
+ * and `checked` are read; that is all the app looks at. */
+function initialAttrs(html) {
+  const out = new Map();
+  const tag = /<(input|select|textarea)\b([^>]*)>/gi;
+  let m;
+  while ((m = tag.exec(html))) {
+    const attrs = m[2];
+    const id = /\bid="([^"]+)"/.exec(attrs);
+    if (!id) continue;
+    const val = /\bvalue="([^"]*)"/.exec(attrs);
+    out.set(id[1], { value: val ? val[1] : "", checked: /\bchecked\b/.test(attrs) });
+  }
+  return out;
+}
+
+function makeSandbox(seed) {
   const els = new Map();
-  const get = id => { if (!els.has(id)) els.set(id, mkEl(id)); return els.get(id); };
+  const get = id => {
+    if (!els.has(id)) {
+      const el = mkEl(id);
+      const s = seed && seed.get(id);
+      if (s) { el.value = s.value; el.checked = s.checked; }
+      els.set(id, el);
+    }
+    return els.get(id);
+  };
   const document = {
     _els: els,
     getElementById: get,
@@ -114,7 +142,7 @@ function load(file) {
   const m = /<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/.exec(html);
   if (!m) throw new Error(`no inline <script> block in ${target}`);
 
-  const sb = makeSandbox();
+  const sb = makeSandbox(initialAttrs(html));
   vm.createContext(sb);
   vm.runInContext(fs.readFileSync(path.join(ROOT, "vendor/three.min.js"), "utf8"),
                   sb, { filename: "three.min.js" });
@@ -208,7 +236,57 @@ function generate(sb) {
   };
 }
 
+/* Read a binary STL back per the spec — 80-byte header, uint32 LE count, then
+ * 50 bytes a triangle — rather than trusting the writer that produced it. */
+function parseStl(buf) {
+  const dv = new DataView(buf);
+  const n = dv.getUint32(80, true);
+  if (buf.byteLength !== 84 + n * 50) throw new Error(`length ${buf.byteLength} != 84 + ${n}*50`);
+  const tris = [];
+  for (let i = 0; i < n; i++) {
+    const o = 84 + i * 50;
+    const f = k => dv.getFloat32(o + k * 4, true);
+    tris.push({ n: [f(0), f(1), f(2)],
+                v: [[f(3), f(4), f(5)], [f(6), f(7), f(8)], [f(9), f(10), f(11)]],
+                attr: dv.getUint16(o + 48, true) });
+  }
+  return tris;
+}
+
+/** Triangles whose stored normal disagrees with their right-hand winding. */
+function windingErrors(tris) {
+  let bad = 0;
+  for (const t of tris) {
+    const [a, b, c] = t.v;
+    const u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+    const w = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+    const x = [u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0]];
+    const L = Math.hypot(...x);
+    if (L < 1e-20) { bad++; continue; }
+    if ((x[0] / L) * t.n[0] + (x[1] / L) * t.n[1] + (x[2] / L) * t.n[2] < 0.99) bad++;
+  }
+  return bad;
+}
+
+/** Edge census of one part's triangles: a closed manifold has every edge twice.
+ *  Vertices are welded by rounded position, since the writer emits them loose. */
+function edgeCensus(tris) {
+  const seen = new Map();
+  const key = v => v.map(x => Math.round(x * 1e6) / 1e6).join(",");
+  for (let i = 0; i < tris.length; i += 9) {
+    const p = [key(tris.slice(i, i + 3)), key(tris.slice(i + 3, i + 6)), key(tris.slice(i + 6, i + 9))];
+    for (let k = 0; k < 3; k++) {
+      const e = [p[k], p[(k + 1) % 3]].sort().join("|");
+      seen.set(e, (seen.get(e) || 0) + 1);
+    }
+  }
+  let boundary = 0, nonManifold = 0;
+  for (const c of seen.values()) { if (c === 1) boundary++; else if (c > 2) nonManifold++; }
+  return { boundary, nonManifold, closed: boundary === 0 && nonManifold === 0 };
+}
+
 module.exports = {
   ROOT, load, mkEl,
   messages, allMessages, nonFiniteVertices, banner, builder, generate,
+  parseStl, windingErrors, edgeCensus,
 };

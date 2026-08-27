@@ -31,7 +31,13 @@ bindings rather than properties of the context object, so `sb.REL` is `undefined
 `sb.$("REL")` works. Reach into the app through `$`.
 
 `harness.js` also exports the helpers the suite is written in — `messages`, `builder`,
-`generate`, `banner`, `nonFiniteVertices`.
+`generate`, `banner`, `nonFiniteVertices`, and for the export tests `parseStl`,
+`windingErrors` and `edgeCensus`, which read a written file back rather than trusting the
+writer that produced it.
+
+One thing the stub gets right that is easy to get wrong: elements are seeded with the
+`value` and `checked` their HTML declares. Without that every input reads back `""`, which
+silently made the deflection scale 0 and everything downstream of it untestable.
 
 ## What is covered
 
@@ -44,6 +50,10 @@ bindings rather than properties of the context object, so `sb.REL` is `undefined
 | `DELETE` purges what `SAVE` carried in | delete-then-respecify keeps only the new inputs |
 | cases tab | `ALPHA` and fin-set limits, `BETA`+`PHI`, the `DAMP` roll restriction, which output cards are emitted |
 | the product is bounded | nine fin sets is refused rather than attempted |
+| mesh export | STL binary/ASCII and OBJ agree; binary STL re-read per the spec; winding, bounding box, OBJ indices, filename |
+| exported components are closed solids | every part is edge-manifold, so a downstream boolean union is well posed |
+| per-panel deflection override | overrides move the panels they name and no others, and clear on deck load |
+| deflection scale is a viewing aid only | the slider changes the drawing but never the exported file |
 | *reference decks* | the four sample decks parse and draw finite geometry under both releases |
 | *real sweep* | an 8-part 2125-case sweep regenerates byte-for-byte against files this tool produced earlier |
 

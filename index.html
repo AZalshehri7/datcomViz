@@ -146,6 +146,10 @@
     padding:5px 10px;line-height:1.25}
   button.formbtn span{font-size:9.5px;letter-spacing:.4px;opacity:.65;
     font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  .exset{display:flex;gap:4px;align-items:center;flex-wrap:wrap;margin-bottom:4px}
+  .exset .sub{width:38px;flex:0 0 auto}
+  .exset input.num{width:52px;text-align:right;padding:3px 5px;font-size:11.5px;
+    font-variant-numeric:tabular-nums}
   #cbSummary{font-size:11.5px;color:var(--dim);margin-right:auto}
   #cbSummary b{color:var(--fg);font-variant-numeric:tabular-nums}
 </style>
@@ -218,6 +222,33 @@
           <div class="sub" style="margin-bottom:3px">Control deflection schedule</div>
           <select id="flapSel"></select>
         </div>
+      </div>
+    </section>
+
+    <section class="grp collapsed" id="g-export"><h2>Export geometry <span class="chev">▼</span></h2>
+      <div class="body">
+        <div class="row">
+          <select id="exFormat" style="flex:1" title="STL is a single unnamed shell. OBJ carries the same triangles but keeps each component as a named object.">
+            <option value="stlb">STL — binary</option>
+            <option value="stla">STL — ASCII</option>
+            <option value="obj">OBJ — keeps component names</option>
+          </select>
+        </div>
+        <label class="chk" style="margin-top:7px"><input type="checkbox" id="exVisible" checked> Only the components ticked above</label>
+        <div id="exDefl"></div>
+        <div class="row" style="margin-top:9px">
+          <button id="exBtn" style="flex:1">Download</button>
+        </div>
+        <div class="sub" id="exCount" style="margin-top:5px"></div>
+        <div class="sub" id="exNote" style="margin-top:3px"></div>
+        <div class="msg" style="margin-top:9px">Most components come out as closed solids, but they are
+          <i>not fused to each other</i> — a fin sits <b>on</b> the body, not joined to it — so the model as a
+          whole is not watertight. A boolean union in CAD or a mesher is well posed. Three exceptions are open
+          or non-manifold on their own: mirrored lifting surfaces meet at the centreline, jet nacelles are
+          uncapped tubes, and stacked <code>LUG</code>/<code>SHOE</code> protuberance members overlap.
+          Facet normals follow right-hand winding throughout. Neither format records units, so the deck's
+          <code>DIM</code> goes in the filename and the header. Deflections are written at the angles in the
+          boxes above, at full scale — the Deflection slider only affects the view.</div>
       </div>
     </section>
 
@@ -1316,7 +1347,13 @@ function buildMissileModel(cse, warn, opts) {
         stations.push({ xle: fs.xle[i], chord: fs.chord[i], sec: fs.sections[i],
                         org, thickDir: tDir, spanDir: sDir, pivot: 0 });
       }
-      const del = (isNum(fs.delta[p]) ? fs.delta[p] : 0) * dScale;
+      // The Export panel can override DELTAn per panel, so a configuration can
+      // be written out at a control setting the deck does not carry. Both
+      // branches below use `del`, so this is the only place it has to happen.
+      const ov = opts.deflSet && opts.deflSet[fs.n];
+      const dBase = (ov && isNum(ov[p])) ? ov[p]
+                  : (isNum(fs.delta[p]) ? fs.delta[p] : 0);
+      const del = dBase * dScale;
 
       if (hasDev) {
         // ---- fin with a trailing-edge device: only the device deflects ----
@@ -2128,6 +2165,10 @@ const ui = id => document.getElementById(id).checked;
    ======================================================================= */
 
 let DECK = null, CASES = [], CASE_I = 0, WARNINGS = [], CHECKS = [], FLAVOR = "";
+/* Per-panel deflection set in the Export panel: { finSetNumber: [deg per panel] }.
+   Null means the deck's own DELTAn. It drives the drawing as well as the export,
+   so the file that comes out is the configuration on screen. */
+let DEFL_SET = null;
 
 function detectFlavor(cse) {
   const k = Object.keys(cse.nl);
@@ -2143,6 +2184,7 @@ function currentOpts() {
   return {
     defScale: +document.getElementById("defScale").value,
     mirror: ui("o-mirror"),
+    deflSet: DEFL_SET,
   };
 }
 
@@ -2184,6 +2226,7 @@ function rebuild() {
   applyDisplay();
   rebuildHelpers(body, cse, FLAVOR);
   renderPartList();
+  renderDeflEditor();
   renderStats();
   renderMessages();
   renderTitle(cse);
@@ -2204,6 +2247,7 @@ function loadText(text, name) {
   }
   DECK = { name, text };
   CASE_I = 0;
+  DEFL_SET = null;                 // another deck's panels are not this one's
   const sel = document.getElementById("caseSel");
   sel.innerHTML = "";
   CASES.forEach((c, i) => {
@@ -2239,14 +2283,16 @@ function renderPartList() {
     lab.innerHTML = `<input type="checkbox" ${p.visible ? "checked" : ""}>
       <span class="swatch" style="background:${COLORS[p.kind] || "#888"}"></span>
       <span>${escapeHtml(p.name)}</span>`;
-    lab.querySelector("input").onchange = e => { p.visible = e.target.checked; p.group.visible = p.visible; };
+    lab.querySelector("input").onchange = e => {
+      p.visible = e.target.checked; p.group.visible = p.visible; exportSyncPreview();
+    };
     el.appendChild(lab);
   });
   const r = document.createElement("div"); r.className = "row";
   const all = document.createElement("button"); all.textContent = "All";
   const none = document.createElement("button"); none.textContent = "None";
-  all.onclick = () => { PARTS.forEach(p => { p.visible = true; p.group.visible = true; }); renderPartList(); };
-  none.onclick = () => { PARTS.forEach(p => { p.visible = false; p.group.visible = false; }); renderPartList(); };
+  all.onclick = () => { PARTS.forEach(p => { p.visible = true; p.group.visible = true; }); renderPartList(); exportSyncPreview(); };
+  none.onclick = () => { PARTS.forEach(p => { p.visible = false; p.group.visible = false; }); renderPartList(); exportSyncPreview(); };
   r.appendChild(all); r.appendChild(none); el.appendChild(r);
 }
 
@@ -2386,7 +2432,8 @@ document.getElementById("ctrClr").onclick = () => {
   rebuild();
 };
 document.getElementById("caseSel").onchange = e => {
-  CASE_I = +e.target.value; syncFlapPicker(CASES[CASE_I], true); rebuild(); fitView();
+  CASE_I = +e.target.value; DEFL_SET = null;
+  syncFlapPicker(CASES[CASE_I], true); rebuild(); fitView();
 };
 document.getElementById("flapSel").onchange = e => { FLAP_PICK = +e.target.value; rebuild(); };
 document.querySelectorAll("#modeRow button").forEach(b => b.onclick = () => {
@@ -2504,7 +2551,295 @@ function buildContourOverlay(body, warn) {
 }
 
 /* =======================================================================
-   13.  CASE BUILDER
+   13.  MESH EXPORT  —  STL and OBJ
+   Writes the drawn configuration out as triangles. Both formats come off the
+   same harvest, so they always agree; the only difference is that OBJ keeps
+   the component names and STL does not.
+
+   Worth knowing before trusting the file:
+     * The model as a whole is not watertight, though most components are
+       closed solids individually. Fins are seated ON the body, not fused to
+       it, so surfaces interpenetrate and a boolean union is needed — a well
+       posed one, since the parts going into it are closed. Known exceptions
+       that are not closed on their own: mirrored lifting surfaces share the
+       centreline edge loop between the two halves, jet nacelles are uncapped
+       tubes, and stacked LUG/SHOE protuberance members overlap each other.
+     * Neither format records units. The deck's DIM is written into the STL
+       solid name, an OBJ comment and the filename, but a receiving tool will
+       still guess. DATCOM's own axes are used as-is: +X aft, +Y starboard,
+       +Z up.
+     * Deflections are written at the angles in the export panel, at full
+       scale. The Deflection slider is a viewing aid and never reaches the
+       file — see withTrueDeflection below.
+   ======================================================================= */
+
+/** Face normal from three vertices; zero for a degenerate triangle. */
+function faceNormal(t, i) {
+  const ax = t[i], ay = t[i + 1], az = t[i + 2];
+  const ux = t[i + 3] - ax, uy = t[i + 4] - ay, uz = t[i + 5] - az;
+  const wx = t[i + 6] - ax, wy = t[i + 7] - ay, wz = t[i + 8] - az;
+  let nx = uy * wz - uz * wy, ny = uz * wx - ux * wz, nz = ux * wy - uy * wx;
+  const L = Math.hypot(nx, ny, nz);
+  return L > 1e-20 ? [nx / L, ny / L, nz / L] : [0, 0, 0];
+}
+
+/* Zero-area triangles are dropped. A surface of revolution collapses its first
+   ring to a point at the nose apex, and a panel with a zero tip chord does the
+   same at the tip, so a raw harvest carries a few dozen of them. They render
+   invisibly but make some meshers and STL validators complain, and there is
+   nothing to lose by leaving them out. */
+let EXPORT_DROPPED = 0;
+
+/** Triangles of one part, in world space, as flat [ax,ay,az, bx,by,bz, ...]. */
+function harvestPart(part) {
+  const tris = [];
+  part.group.updateMatrixWorld(true);
+  part.group.traverse(o => {
+    if (!o.isMesh || o.userData.isEdge) return;      // the edge overlay is a line set
+    const geo = o.geometry;
+    const pos = geo && geo.attributes && geo.attributes.position;
+    if (!pos) return;
+    const idx = geo.index;
+    const n = idx ? idx.count : pos.count;
+    const v = new THREE.Vector3();
+    const t = [];
+    for (let i = 0; i < n; i++) {
+      const j = idx ? idx.getX(i) : i;
+      v.fromBufferAttribute(pos, j).applyMatrix4(o.matrixWorld);
+      t.push(v.x, v.y, v.z);
+      if (t.length < 9) continue;
+      if (t.every(isFinite) && faceNormal(t, 0).some(c => c !== 0)) tris.push(...t);
+      else EXPORT_DROPPED++;
+      t.length = 0;
+    }
+  });
+  return tris;
+}
+
+/** Every part worth writing, as { name, tris }. Empty parts are dropped. */
+function harvestModel(visibleOnly) {
+  EXPORT_DROPPED = 0;
+  return PARTS
+    .filter(p => !visibleOnly || p.visible)
+    .map(p => ({ name: p.name, tris: harvestPart(p) }))
+    .filter(p => p.tris.length >= 9);
+}
+
+const exportTriCount = parts => parts.reduce((a, p) => a + p.tris.length / 9, 0);
+
+/** Binary STL: 80-byte header, uint32 count, then 50 bytes a triangle. */
+function stlBinary(parts, title) {
+  const n = exportTriCount(parts);
+  const buf = new ArrayBuffer(84 + n * 50);
+  const dv = new DataView(buf);
+  // the header is free-form; put the provenance and the units in it
+  const head = title.slice(0, 79);
+  for (let i = 0; i < head.length; i++) dv.setUint8(i, head.charCodeAt(i) & 0x7f);
+  dv.setUint32(80, n, true);
+  let o = 84;
+  for (const p of parts) {
+    const t = p.tris;
+    for (let i = 0; i < t.length; i += 9) {
+      const nrm = faceNormal(t, i);
+      dv.setFloat32(o, nrm[0], true); dv.setFloat32(o + 4, nrm[1], true); dv.setFloat32(o + 8, nrm[2], true);
+      for (let k = 0; k < 9; k++) dv.setFloat32(o + 12 + k * 4, t[i + k], true);
+      dv.setUint16(o + 48, 0, true);            // attribute byte count
+      o += 50;
+    }
+  }
+  return buf;
+}
+
+function stlAscii(parts, title) {
+  const f = v => (Math.abs(v) < 1e-12 ? 0 : v).toExponential(6);
+  const L = [`solid ${title}`];
+  for (const p of parts) {
+    const t = p.tris;
+    for (let i = 0; i < t.length; i += 9) {
+      const nrm = faceNormal(t, i);
+      L.push(`  facet normal ${f(nrm[0])} ${f(nrm[1])} ${f(nrm[2])}`, "    outer loop");
+      for (let k = 0; k < 9; k += 3)
+        L.push(`      vertex ${f(t[i + k])} ${f(t[i + k + 1])} ${f(t[i + k + 2])}`);
+      L.push("    endloop", "  endfacet");
+    }
+  }
+  L.push(`endsolid ${title}`, "");
+  return L.join("\n");
+}
+
+/** OBJ. Same triangles, but each component stays a named object. */
+function objText(parts, title, units) {
+  const f = v => (Math.abs(v) < 1e-12 ? 0 : +v.toPrecision(9));
+  const L = [`# ${title}`,
+             `# axes: +X aft, +Y starboard, +Z up${units ? `   units: ${units}` : ""}`,
+             "# surfaces interpenetrate rather than being fused; not watertight"];
+  let base = 1;
+  for (const p of parts) {
+    // OBJ object names cannot carry spaces without confusing some readers
+    L.push(`o ${p.name.replace(/[^\w.-]+/g, "_").replace(/^_+|_+$/g, "") || "part"}`);
+    const t = p.tris;
+    for (let i = 0; i < t.length; i += 3) L.push(`v ${f(t[i])} ${f(t[i + 1])} ${f(t[i + 2])}`);
+    const nv = t.length / 3;
+    for (let i = 0; i < nv; i += 3) L.push(`f ${base + i} ${base + i + 1} ${base + i + 2}`);
+    base += nv;
+  }
+  L.push("");
+  return L.join("\n");
+}
+
+/** Stem for the written file: the deck name, the case, and the units. */
+function exportStem() {
+  const cse = CASES[CASE_I];
+  const base = (DECK && DECK.name ? DECK.name : "datcomViz").replace(/\.[^.]+$/, "");
+  const nCase = CASES.length > 1 ? `-case${CASE_I + 1}` : "";
+  const u = cse && cse.units ? "-" + cse.units.toLowerCase() : "";
+  return `${base}${nCase}${u}`.replace(/[^\w.-]+/g, "_");
+}
+
+/* The Deflection slider scales the drawing, and the export reads the drawing,
+   so a file taken at 40% would quietly carry 40% of every control angle. The
+   angles in the editor are what the user asked for, so draw at true scale for
+   the harvest and put the view back afterwards. */
+function withTrueDeflection(fn) {
+  const sl = document.getElementById("defScale");
+  const was = sl.value;
+  if (+was === 1) return fn();
+  sl.value = "1"; rebuild();
+  try { return fn(); }
+  finally { sl.value = was; rebuild(); }
+}
+
+function exportRun() {
+  const note = document.getElementById("exNote");
+  if (!PARTS.length) { note.textContent = "Nothing to export — load a deck first."; return; }
+  const fmtSel = document.getElementById("exFormat").value;
+  const parts = withTrueDeflection(() => harvestModel(ui("exVisible")));
+  if (!parts.length) { note.textContent = "No components selected — tick some in Components."; return; }
+
+  const cse = CASES[CASE_I];
+  const units = cse && cse.units ? cse.units : "";
+  const stem = exportStem();
+  const title = `datcomViz ${stem}${units ? " units=" + units : ""} axes=X-aft,Y-stbd,Z-up`;
+
+  let blob, name;
+  if (fmtSel === "obj") {
+    blob = new Blob([objText(parts, title, units)], { type: "text/plain" });
+    name = stem + ".obj";
+  } else if (fmtSel === "stla") {
+    blob = new Blob([stlAscii(parts, title)], { type: "model/stl" });
+    name = stem + ".stl";
+  } else {
+    blob = new Blob([stlBinary(parts, title)], { type: "model/stl" });
+    name = stem + ".stl";
+  }
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+
+  const n = exportTriCount(parts);
+  note.textContent = `Wrote ${name} — ${n.toLocaleString()} triangles across ` +
+    `${parts.length} component${parts.length === 1 ? "" : "s"}` +
+    (EXPORT_DROPPED ? `, ${EXPORT_DROPPED} zero-area dropped.` : ".");
+}
+
+/* ---- the per-panel deflection editor ------------------------------------- */
+
+/** Fin sets in the current case, with their panel count and the deck's DELTAn. */
+function deflSetsForCase() {
+  const cse = CASES[CASE_I];
+  if (!cse || FLAVOR !== "missile") return [];
+  const dfl = NL(cse, "DEFLCT");
+  const out = [];
+  for (let n = 1; n <= 9; n++) {
+    const fn = NL(cse, "FINSET" + n);
+    if (!fn) continue;
+    const np = clamp(Math.round(num(fn, "NPANEL", 4)), 1, 8);
+    const deck = dfl ? narr(dfl, "DELTA" + n) : [];
+    out.push({ n, panels: np, deck });
+  }
+  return out;
+}
+
+function exportSyncPreview() {
+  const el = document.getElementById("exCount");
+  if (!el) return;
+  if (!PARTS.length) { el.textContent = ""; return; }
+  const parts = harvestModel(ui("exVisible"));
+  const cse = CASES[CASE_I];
+  const u = cse && cse.units ? cse.units : "";
+  el.textContent = `${exportTriCount(parts).toLocaleString()} triangles · ` +
+    `${parts.length} component${parts.length === 1 ? "" : "s"}` + (u ? ` · ${u}` : "");
+}
+
+/** Rebuild the deflection editor from the current case. */
+function renderDeflEditor() {
+  const host = document.getElementById("exDefl");
+  if (!host) return;
+  const sets = deflSetsForCase();
+  host.innerHTML = "";
+  if (!sets.length) { exportSyncPreview(); return; }
+
+  const head = document.createElement("div");
+  head.className = "sub";
+  head.style.margin = "9px 0 4px";
+  head.textContent = "Deflection δ per panel (degrees)";
+  host.appendChild(head);
+
+  sets.forEach(fsSpec => {
+    const row = document.createElement("div");
+    row.className = "exset";
+    const lab = document.createElement("span");
+    lab.className = "sub";
+    lab.textContent = `Set ${fsSpec.n}`;
+    row.appendChild(lab);
+    for (let p = 0; p < fsSpec.panels; p++) {
+      const inp = document.createElement("input");
+      inp.type = "text";
+      inp.className = "num";
+      inp.title = `Fin set ${fsSpec.n}, panel ${p + 1}`;
+      const ov = DEFL_SET && DEFL_SET[fsSpec.n];
+      const cur = (ov && isNum(ov[p])) ? ov[p]
+                : (isNum(fsSpec.deck[p]) ? fsSpec.deck[p] : 0);
+      inp.value = String(+(+cur).toFixed(4));
+      inp.onchange = () => {
+        const v = parseFloat(inp.value);
+        if (!isFinite(v)) { inp.value = String(+(+cur).toFixed(4)); return; }
+        DEFL_SET = DEFL_SET || {};
+        const arr = DEFL_SET[fsSpec.n] || (DEFL_SET[fsSpec.n] = []);
+        arr[p] = v;
+        rebuild();
+      };
+      row.appendChild(inp);
+    }
+    host.appendChild(row);
+  });
+
+  const r = document.createElement("div");
+  r.className = "row";
+  r.style.marginTop = "6px";
+  const reset = document.createElement("button");
+  reset.textContent = "Back to the deck";
+  reset.title = "Drop the overrides and draw the DELTAn the deck actually carries.";
+  reset.disabled = !DEFL_SET;
+  reset.onclick = () => { DEFL_SET = null; rebuild(); };
+  r.appendChild(reset);
+  host.appendChild(r);
+
+  if (DEFL_SET) {
+    const n = document.createElement("div");
+    n.className = "sub";
+    n.style.marginTop = "4px";
+    n.style.color = "#e0a33c";
+    n.textContent = "Showing overridden deflections, not the deck's.";
+    host.appendChild(n);
+  }
+  exportSyncPreview();
+}
+
+/* =======================================================================
+   14.  CASE BUILDER
    Expands a set of sweep variables into DATCOM case text.  Which variables
    can live as an array inside one case, and which force a new case, differs
    between the two input forms:
@@ -3344,6 +3679,11 @@ function cbShow(which) {
 }
 document.getElementById("tab-geom").onclick = () => cbShow("geom");
 document.getElementById("tab-case").onclick = () => cbShow("case");
+document.getElementById("exBtn").onclick = exportRun;
+document.getElementById("exFormat").onchange = () => {
+  document.getElementById("exNote").textContent = "";
+};
+document.getElementById("exVisible").onchange = exportSyncPreview;
 document.getElementById("relSel").onchange = e => relSet(e.target.value, true);
 relSet((() => { try { return localStorage.getItem(REL_KEY); } catch (e) { return null; } })(), false);
 document.getElementById("cbRepeat").onchange = e => { CB.repeat = e.target.checked; cbGenerate(); };
@@ -3452,6 +3792,11 @@ drawn nose measures exactly <code>LNOSE</code> (Figure 3). With option 2 body ta
 points are drawn as given.</p>
 <p class="sub">• Aerodynamic namelists (FLTCON, EXPR, TRIM, and the rest) are parsed and
 listed but have no geometric effect.</p>
+<p class="sub">• <b>Exported meshes</b> come out as closed solids per component, but the
+components are not fused to each other — a fin sits on the body rather than joined to it —
+so a boolean union is needed for anything requiring watertightness. Mirrored lifting
+surfaces, jet nacelles and stacked <code>LUG</code>/<code>SHOE</code> members are not
+closed even individually.</p>
 <p class="sub">• <code>DELETE</code> purges a namelist carried in by <code>SAVE</code>;
 where the same case then re-specifies that namelist, only what the case supplies is
 kept, so the inherited values do not show through.</p>

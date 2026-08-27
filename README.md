@@ -34,6 +34,8 @@ or write anything.
 - **Parsed namelists** panel dumps exactly what the parser understood — useful when a
   deck does not draw the way you expected.
 - Save PNG writes the current view to a file.
+- **Export** the drawn configuration as STL or OBJ, at deflections you set per panel.
+  See [Exporting the geometry](#exporting-the-geometry).
 
 ## Which DATCOM this targets
 
@@ -128,6 +130,66 @@ This is the only way to see what the code actually built from an option 1 shape 
 `DISCON` list, rather than what the deck appears to say. It is also a check on this
 viewer: against a contour generated from the exact tangent-ogive relation, the drawn body
 agrees to 0.04 % of the body radius.
+
+## Exporting the geometry
+
+The **Export geometry** panel writes the drawn configuration out as a mesh. It is the
+same triangles either way; the formats differ only in what they can carry:
+
+| Format | Use it when |
+|---|---|
+| **STL — binary** | The default. Compact, universally read. One anonymous shell. |
+| **STL — ASCII** | You want to read or diff the file by eye. Around six times larger. |
+| **OBJ** | You want the components to survive. Each one stays a named object — `Body_AXIBOD`, `Fin_set_1_4_panels_HEX`, `Protuberances_2_sets` — so they arrive separable rather than as one blob. |
+
+Axes are DATCOM's own: **+X aft, +Y starboard, +Z up**. *Only the components ticked
+above* respects the Components panel, so you can export the body alone, or the fins
+without the protuberances.
+
+### Deflections
+
+The panel lists every fin set with one box per panel, pre-filled with the deck's own
+`DELTAn`. Change them and the drawing follows immediately, so what you see is what gets
+written — and you can export the same airframe at several control settings without
+touching the deck. **Back to the deck** drops the overrides.
+
+The angles you type are exported at **full scale**. The Deflection slider in the Display
+panel is a viewing aid and never reaches the file; the exporter draws at 100 % for the
+harvest and puts your view back afterwards.
+
+Overrides belong to the deck and case they were set on, so loading a deck or switching
+case clears them.
+
+### What you are getting
+
+Facet normals follow right-hand winding throughout, and zero-area triangles — the
+collapsed ring at a nose apex, or at a zero tip chord — are dropped rather than written.
+
+**Most components come out as closed solids, but they are not fused to each other.** A
+fin sits *on* the body, not joined to it, so surfaces interpenetrate and the model as a
+whole is not watertight. A boolean union in CAD or a mesher is well posed, because the
+parts going into it are closed. Three things are not closed on their own and are worth
+knowing about before you union:
+
+- **mirrored lifting surfaces** (`WGPLNF`, `HTPLNF` and friends on `BODY`/`SYNTHS` decks)
+  share the centreline edge loop between the two halves, so those edges carry four faces;
+- **jet nacelles** are uncapped tubes;
+- stacked **`LUG`/`SHOE` protuberance members** overlap each other.
+
+Neither STL nor OBJ records units. The deck's `DIM` goes into the filename
+(`for005-case2-in.stl`), the STL solid name and an OBJ comment, but a receiving tool will
+still guess — check the scale on import.
+
+### Why not STEP
+
+STEP splits into two jobs and neither is worth doing here. *Faceted* STEP wraps these same
+triangles as planar-faced B-rep: it opens in CAD, but at roughly eight entities a triangle
+a 10,000-triangle model becomes an 80,000-entity file that is slower, larger and less
+editable than the STL. *Analytic* STEP — body as a surface of revolution, fins as lofts
+between airfoil sections — is what people actually want, and it is genuinely a different
+program: a second geometry pipeline built from the parsed deck rather than from the
+display mesh, plus watertight consistently-oriented topology. Worth doing one day; not a
+variation on this.
 
 ## Case builder
 
