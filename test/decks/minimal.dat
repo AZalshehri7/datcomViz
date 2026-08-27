@@ -1,0 +1,19 @@
+*  Minimal well-formed AXIBOD/FINSET deck. Draws, and should report nothing
+*  under either target release — the baseline the suite measures noise against.
+*
+*  Ogive nose onto a constant centrebody, two fin sets in front-to-back order
+*  with a clear gap between them, roots seated exactly on the body radius.
+*
+CASEID minimal clean deck
+DIM IN
+ $FLTCON NALPHA=5.,ALPHA=0.,4.,8.,12.,16.,
+         NMACH=2.,MACH=0.8,2.0,REN=2*3.0E6,$
+ $REFQ SREF=11.045,LREF=3.75,XCG=20.,$
+ $AXIBOD LNOSE=11.25,DNOSE=3.75,LCENTR=26.25,DCENTR=3.75,DEXIT=0.,$
+ $FINSET1 XLE=15.0,NPANEL=4.,PHIF=0.,90.,180.,270.,
+          SWEEP=0.,STA=1.,SSPAN=1.875,5.0,CHORD=5.0,2.5,
+          ZUPPER=2*0.025,LMAXU=2*0.3,LFLATU=2*0.4,LER=2*0.015,$
+ $FINSET2 XLE=28.0,NPANEL=4.,PHIF=45.,135.,225.,315.,
+          SWEEP=0.,STA=1.,SSPAN=1.875,4.0,CHORD=4.0,2.0,
+          ZUPPER=2*0.025,LMAXU=2*0.3,LFLATU=2*0.4,LER=2*0.015,$
+NEXT CASE
