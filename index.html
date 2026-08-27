@@ -175,6 +175,13 @@
           <div class="sub" style="margin-bottom:3px">Case</div>
           <select id="caseSel"></select>
         </div>
+        <div style="margin-top:9px">
+          <div class="sub" style="margin-bottom:3px">Target release</div>
+          <select id="relSel" title="Which Missile Datcom build the deck is meant for. It sets the limits the checks enforce and which features are reported as missing; it does not change how the geometry is drawn.">
+            <option value="3/11">Rev 3/11 — 2011 manual</option>
+            <option value="5/97">Rev 5/97 — 1997 manual</option>
+          </select>
+        </div>
       </div>
     </section>
 
@@ -254,8 +261,9 @@
         <div id="cbBar">
           <span id="cbSummary"></span>
           <label class="chk" style="font-size:11.5px"><input type="checkbox" id="cbRepeat" checked> Repeat every variable in each case</label>
-          <label class="chk" style="font-size:11.5px" title="Adds FORMAT and WRITE cards that dump the flight conditions, attitude, static coefficients and — with DAMP on — the dynamic derivatives to for004.dat as plain numbers."><input type="checkbox" id="cbWrite"> WRITE tables (for004.dat)</label>
-          <label class="chk" style="font-size:11.5px" title="Adds the PLOT card, which makes DATCOM write the total force and moment data to for003.dat as a fixed-format table — far easier to read than the printed listing."><input type="checkbox" id="cbPlot"> PLOT (for003.dat)</label>
+          <label class="chk" id="cbWriteLbl" style="font-size:11.5px" title="Adds FORMAT and WRITE cards that dump the flight conditions, attitude, static coefficients and — with DAMP on — the dynamic derivatives to for004.dat as plain numbers. Rev 5/97 only: the 2011 manual documents no unit 4, WRITE or FORMAT."><input type="checkbox" id="cbWrite"> WRITE tables (for004.dat)</label>
+          <label class="chk" id="cbFin43Lbl" style="font-size:11.5px" title="Adds PRINT AERO SYNTHS to every case, which makes DATCOM write per-fin-set and per-panel data to for043.csv with column headers. Like DAMP it is effective only for the case it appears in, so it is repeated. Rev 3/11 only."><input type="checkbox" id="cbFin43"> Fin tables (for043.csv)</label>
+          <label class="chk" id="cbPlotLbl" style="font-size:11.5px" title="Adds the PLOT card, which makes DATCOM write the total force and moment data to for003.dat as a fixed-format table — far easier to read than the printed listing. Under Rev 3/11 the same card also writes for020.dat (AML) and for021.dat (AVDS), and for021 does carry the fin deflections."><input type="checkbox" id="cbPlot"> PLOT (for003.dat)</label>
           <label class="chk" style="font-size:11.5px" title="Put the loaded deck's geometry case at the head of every file, so each one runs on its own instead of needing to be pasted under a deck."><input type="checkbox" id="cbEmbed"> Include geometry (ready to run)</label>
           <label class="chk" style="font-size:11.5px" title="DAMP is effective only for the case it appears in, so it has to be repeated in every case to get dynamic derivatives throughout the sweep."><input type="checkbox" id="cbDamp"> DAMP in every case</label>
           <label class="chk" style="font-size:11.5px" title="A run may read at most 300 namelists once SAVE is in effect. Split the sweep across files so every case still gets run."><input type="checkbox" id="cbSplit" checked> Split over the 300 limit</label>
@@ -284,9 +292,14 @@
 
    View-only: nothing is written, nothing leaves the browser.
 
-   Conventions implemented per the 1997 manual, AFRL-VA-WP-TR-1998-3009,
-   documenting Missile Datcom Rev 5/97 — Figures 1, 6, 8, 9 and 10, the sign
-   note under namelist DEFLCT, and the input namelist reference:
+   Two target releases are supported, picked in the sidebar:
+     Rev 3/11  AFRL-RB-WP-TR-2011-3071, the 2011 revision  (default)
+     Rev 5/97  AFRL-VA-WP-TR-1998-3009, the 1997 manual
+   The release decides the array limits and which inputs are reported as not
+   existing; see RELEASES below. It does not change the drawing, because the
+   conventions are the same in both — Figures 1, 6, 8, 9 and 10 of the 1997
+   manual are Figures 1, 7, 9, 10 and 11 of the 2011 one, unchanged, as is the
+   sign note under namelist DEFLCT:
      * body axes  : +X aft (nose to tail), +Y starboard, +Z up
      * PHIF / PHI : measured clockwise from top vertical centre, looking
                     forward from behind the missile  =>  unit vector
@@ -303,11 +316,42 @@
 
 const D2R = Math.PI / 180, R2D = 180 / Math.PI;
 
-/* Limits taken from the 1997 manual, AFRL-VA-WP-TR-1998-3009, which documents
-   Missile Datcom Rev 5/97. Later releases raise several of these — ALPHA to 100
-   and fin sets to 9 — so a deck written for a newer build can exceed them. */
-const ALPHA_MAX = 20;          // Table 3: ALPHA array size
-const FINSET_MAX = 4;          // "up to four non-overlapping fin sets"
+/* Which release a deck is aimed at decides what counts as a defect, so the
+   limits and the feature gates are held in one table rather than scattered as
+   constants. The drawing conventions are identical between the two — Figures
+   1/2/7/9/11/13 of the 2011 manual restate the 1997 ones — so only the checks
+   and the Cases tab consult this.
+
+   5/97  AFRL-VA-WP-TR-1998-3009, Rev 5/97 (the 1997 manual)
+   3/11  AFRL-RB-WP-TR-2011-3071, Rev 3/11 (the 2011 revision)                */
+const RELEASES = {
+  "3/11": {
+    key: "3/11", label: "Rev 3/11", doc: "AFRL-RB-WP-TR-2011-3071 (2011 revision)",
+    alphaMax: 100,           // 7/07 raised ALPHA from 20; NALPHA must still be > 1
+    finsetMax: 9,            // 8/08: nine fin sets, up to 8 panels each
+    hingeSets: 4,            // XHINGE and SKEW are still array size 4
+    nvor: true,              // 3/11: up to 20 shed vortices per fin
+    camber: true,            // 1/06: body Z camber, PHI must be zero with it
+    conicCentre: true,       // 1/06: conic centrebodies handled
+    phipro: true,            // 8/08: protuberance angular orientation
+    nincr: true,             // 3/11: user-set number of trim increments
+    asym: false,             // 8/08 deleted $TRIM ASYM
+    write004: false,         // no unit 4, WRITE or FORMAT in the 2011 manual
+    csv042: true,            // for042.csv always written, for043.csv on request
+    dampRollRestriction: true,   // "not computed if PHI or BETA are non-zero"
+    betaPhiFatal: true,      // 7/07: ALPHA with BETA and PHI stops the run
+    ordering: "vortex",      // fin set order governs vortex tracking, not validity
+  },
+  "5/97": {
+    key: "5/97", label: "Rev 5/97", doc: "AFRL-VA-WP-TR-1998-3009 (1997 manual)",
+    alphaMax: 20, finsetMax: 4, hingeSets: 4,
+    nvor: false, camber: false, conicCentre: false, phipro: false,
+    nincr: false, asym: true, write004: true, csv042: false,
+    dampRollRestriction: false, betaPhiFatal: false,
+    ordering: "strict",      // "up to four non-overlapping fin sets"
+  },
+};
+let REL = RELEASES["3/11"];
 const isNum = v => typeof v === "number" && isFinite(v);
 const fmt = (v, d = 3) => (isNum(v) ? (Math.abs(v) >= 1e5 || (v !== 0 && Math.abs(v) < 1e-3)
   ? v.toExponential(2) : (+v.toFixed(d)).toString()) : "—");
@@ -425,17 +469,30 @@ function parseDeck(text) {
 
   const cases = [];
   const blank = () => ({ title: "", nl: {}, cards: [], airfoils: [], units: "",
-                         own: 0, save: false, del: [], inherited: new Set(), fresh: new Set() });
+                         own: 0, save: false, del: [], inherited: new Set(),
+                         fresh: new Set(), ownNl: {} });
   let cur = blank();
   const push = () => {
-    // apply DELETE: purge inherited namelists that were not re-specified here
-    cur.del.forEach(n => { if (cur.inherited.has(n) && !cur.fresh.has(n)) delete cur.nl[n]; });
+    // Apply DELETE. The manual: "All previously saved namelists with the names
+    // specified will be purged ... Any new inputs of the same namelist will be
+    // retained." So a name that is both deleted and re-specified keeps only
+    // what this case supplied — the inherited values do not show through.
+    // Control cards may sit anywhere in a case, so this does not depend on
+    // whether the DELETE card came before or after the namelist.
+    cur.del.forEach(n => {
+      if (!cur.inherited.has(n)) return;
+      if (cur.fresh.has(n)) cur.nl[n] = cur.ownNl[n];
+      else delete cur.nl[n];
+    });
     cases.push(cur);
   };
   for (const it of items) {
     if (it.type === "nl") {
+      const assigns = parseAssignments(it.body);
       if (!cur.nl[it.name]) cur.nl[it.name] = {};
-      mergeNamelist(cur.nl[it.name], parseAssignments(it.body));
+      mergeNamelist(cur.nl[it.name], assigns);
+      if (!cur.ownNl[it.name]) cur.ownNl[it.name] = {};
+      mergeNamelist(cur.ownNl[it.name], assigns);
       cur.fresh.add(it.name);
       cur.own++;
       continue;
@@ -1415,24 +1472,80 @@ function missileGeomChecks(cse, body, fins, warn) {
   });
 
   // --- features the running release may not have ---------------------------
+  // Gated on the target release rather than assumed: a deck written for a
+  // modern build is not wrong, it is simply aimed elsewhere. Every message
+  // that turns on the release says so, and offers the switch. The hint has to
+  // name a release the selector actually has, which is not the same as the
+  // release a feature first appeared in — NVOR arrived in 3/11 and PHIPRO in
+  // 8/08, but 3/11 is the target that has both.
+  const swap = to => ` Switch the target release to ${to} if that is the build you run.`;
+  const missing = (what, arrived) =>
+    `${what} does not exist in ${REL.label} — it arrived in ${arrived} — so it will be rejected or ignored.${swap("3/11")}`;
+
   fins.forEach(f => {
-    if (f.n > FINSET_MAX)
-      chk(`FINSET${f.n} is beyond the ${FINSET_MAX} non-overlapping fin sets the code allows.`);
+    if (f.n > REL.finsetMax)
+      chk(`FINSET${f.n} is beyond the ${REL.finsetMax} fin sets ${REL.label} allows.` +
+          (REL.finsetMax < 9 ? swap("3/11") : ""));
   });
+
   const bodyNl = NL(cse, "AXIBOD") || NL(cse, "ELLBOD");
-  if (bodyNl && narr(bodyNl, "Z").some(v => v))
-    chk(`The body Z camber array does not exist in this release — it arrived in 1/06 — so the centreline offset is drawn here but will be ignored by the code.`);
-  if (bodyNl) {
+  const cambered = bodyNl && narr(bodyNl, "Z").some(v => v);
+  if (cambered && !REL.camber)
+    chk(missing("The body Z camber array", "1/06") +
+        " The centreline offset is drawn here regardless.");
+  if (cambered && REL.camber) {
+    // "Cambered should only be run with the aerodynamic roll angle (PHI) set to zero."
+    const phi = num(NL(cse, "FLTCON"), "PHI", 0);
+    if (isNum(phi) && Math.abs(phi) > 1e-9)
+      chk(`The body is cambered (Z is non-zero) and $FLTCON sets PHI=${fmt(phi)}. The manual states a cambered body should only be run with the aerodynamic roll angle at zero.`);
+  }
+  if (bodyNl && !REL.conicCentre) {
     const dn = num(bodyNl, "DNOSE", NaN), dc = num(bodyNl, "DCENTR", NaN);
     if (isNum(dn) && isNum(dc) && Math.abs(dn - dc) > 1e-9)
-      chk(`DCENTR differs from DNOSE, making the centrebody conic. This release cannot handle conic centrebodies; support arrived in 1/06.`);
+      chk(`DCENTR differs from DNOSE, making the centrebody conic. ${REL.label} cannot handle conic centrebodies; support arrived in 1/06.${swap("3/11")}`);
   }
+
+  const lastFin = fins.length ? fins[fins.length - 1].n : 0;
   fins.forEach(f => {
-    if (NL(cse, "FINSET" + f.n) && isNum(num(NL(cse, "FINSET" + f.n), "NVOR", NaN)))
-      chk(`FINSET${f.n} sets NVOR, which does not exist in this release — it arrived in 3/11 — so it will be rejected or ignored.`);
+    const fn = NL(cse, "FINSET" + f.n);
+    const nvor = fn ? num(fn, "NVOR", NaN) : NaN;
+    if (!isNum(nvor)) return;
+    if (!REL.nvor) { chk(missing(`FINSET${f.n} sets NVOR, which`, "3/11")); return; }
+    if (nvor < 1 || nvor > 20)
+      chk(`FINSET${f.n}: NVOR=${fmt(nvor)} is outside the 1 to 20 vortices per fin the code accepts.`);
+    // "fin-shed vortices only affect fins that are downstream". NVOR=1 is the
+    // default, so restating it costs nothing and is not worth reporting.
+    if (f.n === lastFin && fins.length > 1 && nvor > 1)
+      chk(`FINSET${f.n}: NVOR is set on the aftmost fin set, whose shed vortices have nothing downstream to act on, so it has no effect.`);
   });
-  if (NL(cse, "TRIM") && isNum(num(NL(cse, "TRIM"), "NINCR", NaN)))
-    chk(`$TRIM sets NINCR, which does not exist in this release — it arrived in 3/11.`);
+
+  const trim = NL(cse, "TRIM");
+  if (trim && isNum(num(trim, "NINCR", NaN)) && !REL.nincr)
+    chk(missing("$TRIM sets NINCR, which", "3/11"));
+  if (trim && !REL.asym && trim.ASYM !== undefined)
+    chk(`$TRIM sets ASYM, which was deleted from the code in 8/08 and does not exist in ${REL.label}.${swap("5/97")}`);
+
+  // DELTAn reaches nine sets, but XHINGE and SKEW are still array size 4
+  const dfl = NL(cse, "DEFLCT");
+  if (dfl) {
+    for (let n = 1; n <= 9; n++) {
+      if (!narr(dfl, "DELTA" + n).some(v => v)) continue;
+      if (n > REL.finsetMax) {
+        chk(`$DEFLCT sets DELTA${n}, but ${REL.label} has only ${REL.finsetMax} fin sets.` + swap("3/11"));
+      } else if (n > REL.hingeSets) {
+        const fn = NL(cse, "FINSET" + n);
+        if (fn && !narr(fn, "CFOC").some(v => v && v < 1))
+          chk(`$DEFLCT deflects fin set ${n} as an all-moveable panel, but XHINGE and SKEW are array size ${REL.hingeSets}, so sets beyond ${REL.hingeSets} pivot about the default hinge at half the exposed root chord and the hinge line cannot be specified.`);
+      }
+    }
+  }
+
+  // "Input ALPHA, BETA and PHI is NOT allowed" — 7/07 onward stops the run
+  const fc = NL(cse, "FLTCON");
+  if (fc && fc.BETA !== undefined && fc.PHI !== undefined)
+    chk(REL.betaPhiFatal
+      ? `$FLTCON supplies both BETA and PHI. ${REL.label} treats that as a fatal error and stops execution — give one or the other.`
+      : `$FLTCON supplies both BETA and PHI. ${REL.label} accepts it but ignores BETA whenever PHI is non-zero, so the sideslip has no effect.${swap("3/11")}`);
 
   // --- protuberances: the arrays must actually cover what NPROT declares ---
   const pr = NL(cse, "PROTUB");
@@ -1446,7 +1559,9 @@ function missileGeomChecks(cse, body, fins, warn) {
       needAngles += Math.max(1, Math.round(isNum(nloc[i]) ? nloc[i] : 1));
     }
     const phipro = narr(pr, "PHIPRO"), lprot = narr(pr, "LPROT");
-    if (phipro.length && phipro.length < needAngles)
+    if (phipro.length && !REL.phipro)
+      chk(missing("$PROTUB sets PHIPRO, which", "8/08"));
+    else if (phipro.length && phipro.length < needAngles)
       chk(`$PROTUB: ${needAngles} protuberances are declared but PHIPRO gives only ${phipro.length} angles. The manual requires an angle for every one when this option is used.`);
     if (lprot.length && lprot.length < needMembers)
       chk(`$PROTUB: the member arrays need ${needMembers} entries (LUG counts as 4 members and SHOE as 3) but LPROT gives ${lprot.length}.`);
@@ -1505,9 +1620,19 @@ function missileGeomChecks(cse, body, fins, warn) {
     const aTE = Math.max(...a.xle.map((x, j) => x + a.chord[j]));
     const bLE = Math.min(...b.xle);
     if (bLE < Math.min(...a.xle))
-      chk(`Fin set ${b.n} lies ahead of fin set ${a.n}. Fin sets must be numbered sequentially front to back and must not overlap, so this is an input error rather than a preference.`);
+      chk(REL.ordering === "strict"
+        ? `Fin set ${b.n} lies ahead of fin set ${a.n}. Fin sets must be numbered sequentially front to back and must not overlap, so this is an input error rather than a preference.`
+        // 3/11 drops "non-overlapping" and states the consequence instead:
+        // "The code only tracks vortices from a given finset to a finset with
+        //  a higher index."
+        : `Fin set ${b.n} lies ahead of fin set ${a.n}, so the sets are not numbered front to back. Vortices are only tracked from a set to higher-numbered sets, so set ${b.n} sheds into nothing and set ${a.n}, which is behind it, never sees that wake.`);
     else if (bLE <= aTE + tol)
-      chk(`Fin sets ${a.n} and ${b.n} have no positive longitudinal gap (set ${a.n} ends at x=${fmt(aTE)}, set ${b.n} starts at x=${fmt(bLE)}), so the code will not track vortices between them.`);
+      chk(`Fin sets ${a.n} and ${b.n} have no positive longitudinal gap (set ${a.n} ends at x=${fmt(aTE)}, set ${b.n} starts at x=${fmt(bLE)}), so the code will not track vortices between them.` +
+        (REL.ordering === "strict" ? ""
+          // 3/11: "This allows multiple fin planforms to be defined at the same
+          // longitudinal station, for example, a horizontal and vertical tail
+          // of differing planform."
+          : ` That is permitted deliberately — it is how a horizontal and a vertical tail of differing planform are put at the same station — so it is only a defect if you expected the coupling.`));
   }
 }
 
@@ -2393,7 +2518,10 @@ function buildContourOverlay(body, warn) {
                      all arrays, so almost nothing needs a second case.
    ======================================================================= */
 
-const CB = { form: "missile", vars: [], loop: 2, repeat: true, split: true, reserve: 12, damp: false, embed: false, plot: false, write: false };
+const CB = { form: "missile", vars: [], loop: 2, repeat: true, split: true, reserve: 12, damp: false, embed: false, plot: false, write: false, fin43: false };
+/* Refuse rather than freeze. Sweeps this size are a mis-set range, not a plan:
+   at ~290 cases a file it is already over 170 files to run. */
+const CASE_MAX = 50000;
 let CB_FILES = [], cbPart = 0;
 
 /* ---- value formatting ---------------------------------------------------- */
@@ -2442,6 +2570,10 @@ function nlBlock(name, parts) {
 }
 
 /* ---- variable specifications per form ------------------------------------ */
+/* Array limits that move between releases are held as a key into REL rather
+   than baked into the spec, so switching the target re-validates in place. */
+const varMax = v => (v.maxKey ? REL[v.maxKey] : v.max);
+
 function cbSpec(form) {
   const R = (o) => Object.assign({ enabled: false, mode: "range", list: "", a: 0, b: 0, step: 1, count: 5 }, o);
   if (form === "digital") {
@@ -2461,7 +2593,7 @@ function cbSpec(form) {
   }
   return [
     R({ key: "alpha", label: "Angle of attack α", unit: "deg", cls: "array", nl: "FLTCON",
-        name: "ALPHA", count_name: "NALPHA", max: ALPHA_MAX, min_n: 2, enabled: true, a: -4, b: 20, step: 4 }),
+        name: "ALPHA", count_name: "NALPHA", maxKey: "alphaMax", min_n: 2, enabled: true, a: -4, b: 20, step: 4 }),
     R({ key: "mach", label: "Mach number", unit: "", cls: "array", nl: "FLTCON",
         name: "MACH", count_name: "NMACH", max: 20, enabled: true, mode: "list", list: "0.8, 1.2, 2.0, 3.0" }),
     R({ key: "ren", label: "Reynolds number / unit length", unit: "1/ft", cls: "array", nl: "FLTCON",
@@ -2484,10 +2616,10 @@ function cbDeflSpec(sets) {
     enabled: false, mode: "range", list: "", a: -10, b: 10, step: 5, count: 5,
   }));
 }
-/** Append the lowest unused fin set, so DELTA1..9 can be built up as needed. */
+/** Append the lowest unused fin set, up to as many as the release has. */
 function cbAddFinSet() {
   const used = CB.vars.filter(v => v.defl).map(v => +v.name.slice(5));
-  for (let n = 1; n <= 9; n++)
+  for (let n = 1; n <= REL.finsetMax; n++)
     if (!used.includes(n)) { CB.vars.push(cbDeflSpec([{ n, panels: 1 }])[0]); break; }
   cbRender(); cbGenerate();
 }
@@ -2626,6 +2758,28 @@ function cbSyncReserve() {
    survives a reload. Only these settings are stored; the deck itself never is.
    -------------------------------------------------------------------------- */
 const CB_KEY = "datcomviz.cases.v1";
+/* The target release is a property of the build you run, not of a sweep you
+   set up, so it is stored separately and Reset in the Cases tab leaves it. */
+const REL_KEY = "datcomviz.release.v1";
+function relSet(key, redraw) {
+  REL = RELEASES[key] || RELEASES["3/11"];
+  try { localStorage.setItem(REL_KEY, REL.key); } catch (e) { /* storage off */ }
+  const sel = document.getElementById("relSel");
+  if (sel) sel.value = REL.key;
+  // the two output-file ticks only exist on the release that has the file
+  const show = (id, on) => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = on ? "" : "none";
+  };
+  show("cbWriteLbl", REL.write004);
+  show("cbFin43Lbl", REL.csv042);
+  // rebuild() re-runs the checks and the builder together; without a deck the
+  // builder still has to redraw, since the row tags carry the array limits
+  if (redraw) {
+    if (CASES[CASE_I]) rebuild();
+    else if (CB.vars.length) { cbRender(); cbGenerate(); }
+  }
+}
 const CB_FIELDS = ["key", "name", "cls", "defl", "enabled", "mode", "list",
                    "a", "b", "step", "count", "panels", "pattern"];
 function cbSave() {
@@ -2637,7 +2791,8 @@ function cbSave() {
     });
     localStorage.setItem(CB_KEY, JSON.stringify({ form: CB.form, loop: CB.loop, repeat: CB.repeat,
                                                   split: CB.split, reserve: CB.reserve,
-                                                  damp: CB.damp, embed: CB.embed, plot: CB.plot, write: CB.write, vars }));
+                                                  damp: CB.damp, embed: CB.embed, plot: CB.plot, write: CB.write,
+                                                  fin43: CB.fin43, vars }));
   } catch (e) { /* storage disabled or full — the builder still works */ }
 }
 function cbRestore() {
@@ -2653,6 +2808,7 @@ function cbRestore() {
   CB.embed = st.embed === true;
   CB.plot = st.plot === true;
   CB.write = st.write === true;
+  CB.fin43 = st.fin43 === true;
   CB.vars = cbSpec(CB.form);
   st.vars.filter(v => v.defl && /^DELTA[1-9]$/.test(v.name || "")).forEach(v =>
     CB.vars.push(cbDeflSpec([{ n: +v.name.slice(5), panels: clamp(v.panels || 1, 1, 8) }])[0]));
@@ -2672,6 +2828,7 @@ function cbRestore() {
   if (em) { em.checked = CB.embed; if (rv) rv.disabled = CB.embed; }
   const pl = document.getElementById("cbPlot"); if (pl) pl.checked = CB.plot;
   const wr = document.getElementById("cbWrite"); if (wr) wr.checked = CB.write;
+  const f43 = document.getElementById("cbFin43"); if (f43) f43.checked = CB.fin43;
   return true;
 }
 function cbForget() {
@@ -2739,7 +2896,8 @@ function cbRender() {
 function cbRow(v) {
   const d = document.createElement("div");
   d.className = "cbrow" + (v.enabled ? "" : " off");
-  const tag = v.cls === "array" ? (v.name + (v.max ? " ≤" + v.max : "")) : v.name;
+  const vmax = varMax(v);
+  const tag = v.cls === "array" ? (v.name + (vmax ? " ≤" + vmax : "")) : v.name;
   d.innerHTML = `<header><input type="checkbox" ${v.enabled ? "checked" : ""}>
       <b>${escapeHtml(v.label)}</b>${v.unit ? ` <span class="sub">${v.unit}</span>` : ""}
       <span class="tag">${escapeHtml(tag)}</span></header>
@@ -2834,7 +2992,8 @@ function cbGenerate() {
     const n = v._vals.length;
     const shown = n > 12 ? v._vals.slice(0, 10).map(fmtF).join(", ") + ", … , " + fmtF(v._vals[n - 1])
                          : v._vals.map(fmtF).join(", ");
-    const over = v.max && n > v.max ? `  — exceeds ${v.name} limit of ${v.max}` : "";
+    const vmax = varMax(v);
+    const over = vmax && n > vmax ? `  — exceeds ${v.name} limit of ${vmax} in ${REL.label}` : "";
     v._prevEl.textContent = `→ ${shown}   (${n} value${n === 1 ? "" : "s"}${v.cls === "case" ? ", " + n + " cases" : ""})${over}`;
     v._prevEl.style.color = over ? "#e06c5c" : "";
   });
@@ -2844,7 +3003,8 @@ function cbGenerate() {
 
   arrays.forEach(v => {
     if (!v._vals.length) errs.push(`${v.label}: no values.`);
-    if (v.max && v._vals.length > v.max) errs.push(`${v.label}: ${v._vals.length} values exceeds the ${v.name} limit of ${v.max}.`);
+    const vmax = varMax(v);
+    if (vmax && v._vals.length > vmax) errs.push(`${v.label}: ${v._vals.length} values exceeds the ${v.name} limit of ${vmax} in ${REL.label}.`);
     if (v.min_n && v._vals.length < v.min_n) errs.push(`${v.label}: ${v.count_name} must be greater than 1.`);
     if (v.ascending) {
       const sorted = v._vals.slice().sort((a, b) => a - b);
@@ -2853,10 +3013,21 @@ function cbGenerate() {
   });
   caseVars.forEach(v => { if (!v._vals.length) errs.push(`${v.label}: no values.`); });
 
+  // a deck can seed more fin sets than the target release has
+  caseVars.filter(v => v.defl).forEach(v => {
+    const n = +v.name.slice(5);
+    if (n > REL.finsetMax)
+      errs.push(`${v.label}: ${REL.label} has only ${REL.finsetMax} fin sets, so ${v.name} does not exist. Switch the target release to 3/11, or disable this row.`);
+  });
+
   const beta = on.find(v => v.key === "beta"), phi = on.find(v => v.key === "phi");
   if (beta && phi) {
-    // 3/11 stops the run; 5/97 simply ignores BETA when PHI is non-zero
-    warns.push("both BETA and PHI are enabled. The code accepts that but ignores BETA whenever PHI is non-zero, so the sideslip sweep will have no effect.");
+    // "Input ALPHA, BETA and PHI is NOT allowed. The 7/07 and subsequent
+    //  releases will generate an error message and STOP execution."
+    if (REL.betaPhiFatal)
+      errs.push(`both BETA and PHI are enabled. ${REL.label} treats a case carrying both as a fatal error and stops execution. Sweep one or the other.`);
+    else
+      warns.push(`both BETA and PHI are enabled. ${REL.label} accepts that but ignores BETA whenever PHI is non-zero, so the sideslip sweep will have no effect.`);
   }
   // The (alpha, beta) to (alpha_T, phi) conversion divides by a function of
   // alpha, so zero or negative alpha with non-zero sideslip is degenerate.
@@ -2867,11 +3038,23 @@ function cbGenerate() {
     if (alphaV._vals.some(a => a < -1e-9))
       warns.push(`this sweep pairs a non-zero BETA with negative alpha. Total angle of attack is always positive, so negative alpha has to be carried as a roll angle past 90 degrees, which a single arctangent cannot recover; expect wrong signs or NaN. Run those points as ALPHA with PHI instead.`);
   }
-  // Later manuals state damping derivatives are not computed when PHI or BETA
-  // is non-zero. That does not hold for Rev 5/97: a case at PHI=45 with zero
-  // deflections returns CMQ, so no caution is raised here.
+  // The 3/11 manual states outright, under the DAMP control card, that damping
+  // derivatives are not computed when PHI or BETA is non-zero. The 5/97 DAMP
+  // paragraph carries no such sentence, and a 5/97-vintage build run at PHI=45
+  // with zero deflections does return CMQ — so this is raised on 3/11 only.
+  if (CB.damp && REL.dampRollRestriction) {
+    const rolled = [phi, beta].filter(v => v && v._vals.some(x => Math.abs(x) > 1e-9))
+                              .map(v => v.name);
+    if (rolled.length)
+      warns.push(`DAMP is ticked and this sweep carries non-zero ${rolled.join(" and ")}. ${REL.label} states that damping derivatives are not computed when PHI or BETA is non-zero, so those cases will return static coefficients only. A 5/97-vintage build does return CMQ at PHI=45; switch the target release if that is what you run.`);
+  }
 
-  if (CB.write) {
+  // A tick stored under one release must not leak cards into the other, so the
+  // flags are read through the release rather than straight off CB.
+  const useWrite = CB.write && REL.write004;
+  const useFin43 = CB.fin43 && REL.csv042;
+
+  if (useWrite) {
     const wb = writeBlockNames();
     if (!CB.damp)
       warns.push(`WRITE is on but DAMP is not, so only the static block ${wb.stat} is dumped. Tick DAMP to have the dynamic derivatives written as well.`);
@@ -2906,6 +3089,32 @@ function cbGenerate() {
     });
   }
 
+  // Size the product before building it. Nine fin sets at five deflections
+  // each is nearly two million cases, which is a handful of clicks away and
+  // would otherwise be materialised, packed and emitted before anything drew.
+  const nCases = caseVars.reduce((a, v) => a * v._vals.length, 1);
+  const nPts = (arrays.find(v => v.key === "alpha")?._vals.length || 0) *
+               (arrays.find(v => v.key === "mach")?._vals.length || 0);
+  sum.innerHTML = `<b>${nCases}</b> case${nCases === 1 ? "" : "s"}` +
+    (nPts ? ` · <b>${nPts}</b> α×Mach points each · <b>${nCases * nPts}</b> total` : "");
+
+  if (nCases > CASE_MAX) {
+    // point at the widest variable only when one of them actually is widest;
+    // with every row the same size there is nothing useful to single out
+    const byWidth = caseVars.slice().sort((a, b) => b._vals.length - a._vals.length);
+    const hint = byWidth.length > 1 && byWidth[0]._vals.length > byWidth[1]._vals.length
+      ? ` Narrowing ${byWidth[0].name}, the widest at ${byWidth[0]._vals.length} values, cuts it fastest.`
+      : ` Every case-forming variable multiplies the rest, so dropping one row helps more than trimming several.`;
+    errs.push(`${nCases} cases is more than this will generate at once — the ceiling is ${CASE_MAX}, which is already about ${Math.ceil(CASE_MAX / 290)} files to run. ` +
+      caseVars.map(v => `${v.name}×${v._vals.length}`).join(" · ") + "." + hint);
+  }
+
+  if (errs.length) {
+    cbBanner(errs, warns);
+    out.textContent = "Cannot generate — see the notes above.\n";
+    return;
+  }
+
   // cartesian product over the case-forming variables
   let combos = [[]];
   caseVars.forEach(v => {
@@ -2913,17 +3122,6 @@ function cbGenerate() {
     combos.forEach(c => v._vals.forEach(x => next.push(c.concat([x]))));
     combos = next;
   });
-  const nPts = (arrays.find(v => v.key === "alpha")?._vals.length || 0) *
-               (arrays.find(v => v.key === "mach")?._vals.length || 0);
-
-  sum.innerHTML = `<b>${combos.length}</b> case${combos.length === 1 ? "" : "s"}` +
-    (nPts ? ` · <b>${nPts}</b> α×Mach points each · <b>${combos.length * nPts}</b> total` : "");
-
-  if (errs.length) {
-    cbBanner(errs, warns);
-    out.textContent = "Cannot generate — see the notes above.\n";
-    return;
-  }
 
   // ---- work out how the cases divide into runs ----------------------------
   // A run reads at most 300 namelists once SAVE is in effect, and the geometry
@@ -3018,7 +3216,7 @@ function cbGenerate() {
         // PLOT, FORMAT and WRITE are effective for a whole run, not one case,
         // so they are written once per file rather than repeated like DAMP
         if (CB.plot) bodyL.push("PLOT");
-        if (CB.write) {
+        if (useWrite) {
           const wb = writeBlockNames();
           // a block name that does not match the vehicle is not an error: the
           // block is written in full and every value comes back zero
@@ -3035,8 +3233,10 @@ function cbGenerate() {
       ["FLTCON", "REFQ", "DEFLCT", "SYMFLP", "ASYFLP"].forEach(nl => {
         if (parts[nl] && parts[nl].length) { bodyL.push(nlBlock(nl, parts[nl])); nlCount++; }
       });
-      // DAMP is effective only for the case it appears in, so repeat it
+      // DAMP is effective only for the case it appears in, so repeat it.
+      // PRINT AERO is in the same group of per-case cards, so it repeats too.
       if (CB.damp) bodyL.push("DAMP");
+      if (useFin43) bodyL.push("PRINT AERO SYNTHS");
       // NEXT CASE is what makes a case run. The manual: it "indicates
       // termination of the case input data and instructs the program to begin
       // case execution ... must be the last card input for the case." Leaving
@@ -3061,6 +3261,15 @@ function cbGenerate() {
         L.push("*  Every part is a separate run and needs the same geometry ahead of it.");
     }
     if (CB.repeat) L.push("*  Every case restates all swept variables, so each stands on its own.");
+    if (REL.csv042) {
+      // for042.csv is always written and carries no deflection column, so a
+      // deflection sweep is matched back through CASE, which counts the cases
+      // of the run in the same order the CASEID lines below number them.
+      L.push("*  Results: for042.csv is written automatically, with column headers. It");
+      L.push("*  carries CASE, MACH, ALT, BETA, PHI and ALPHA alongside the coefficients,");
+      L.push("*  but no deflection column — match a deflection sweep back through CASE,");
+      L.push("*  which runs 1..N per file in the CASEID order below.");
+    }
     L.push("*");
     L.push(`*  ${to - from} case(s)` + (nPts ? `, ${nPts} alpha x Mach points each` : "") +
            `, ${nlCount} namelist${nlCount === 1 ? "" : "s"}` +
@@ -3135,6 +3344,8 @@ function cbShow(which) {
 }
 document.getElementById("tab-geom").onclick = () => cbShow("geom");
 document.getElementById("tab-case").onclick = () => cbShow("case");
+document.getElementById("relSel").onchange = e => relSet(e.target.value, true);
+relSet((() => { try { return localStorage.getItem(REL_KEY); } catch (e) { return null; } })(), false);
 document.getElementById("cbRepeat").onchange = e => { CB.repeat = e.target.checked; cbGenerate(); };
 document.getElementById("cbReset").onclick = cbForget;
 document.getElementById("cbCopy").onclick = () => {
@@ -3158,6 +3369,7 @@ document.getElementById("cbPartSel").onchange = e => {
 document.getElementById("cbDamp").onchange = e => { CB.damp = e.target.checked; cbGenerate(); };
 document.getElementById("cbPlot").onchange = e => { CB.plot = e.target.checked; cbGenerate(); };
 document.getElementById("cbWrite").onchange = e => { CB.write = e.target.checked; cbGenerate(); };
+document.getElementById("cbFin43").onchange = e => { CB.fin43 = e.target.checked; cbGenerate(); };
 document.getElementById("cbEmbed").onchange = e => {
   CB.embed = e.target.checked;
   document.getElementById("cbReserve").disabled = CB.embed;   // counted, not guessed
@@ -3178,6 +3390,18 @@ document.getElementById("about").innerHTML = `
 <div class="msg info">This is a <b>view-only</b> tool. It parses an input deck and draws the
 geometry it describes. It does not run DATCOM, read output files, or write anything. The
 <b>Cases</b> tab generates sweep text to paste into a deck; it does not run anything either.</div>
+<p class="sub"><b>Target release.</b> The picker in <i>Input deck</i> chooses which
+Missile Datcom build a deck is checked against. <b>Rev 3/11</b> (the 2011 manual,
+AFRL-RB-WP-TR-2011-3071) is the default: <code>ALPHA</code> up to 100, nine fin sets,
+<code>NVOR</code>, body <code>Z</code> camber, conic centrebodies, <code>PHIPRO</code>
+and <code>$TRIM NINCR</code> all exist; <code>ASYM</code> does not; <code>BETA</code>
+with <code>PHI</code> in one case is fatal; damping derivatives are not computed at
+non-zero <code>PHI</code> or <code>BETA</code>; and results come out through
+<code>for042.csv</code>, which is always written. <b>Rev 5/97</b> (the 1997 manual,
+AFRL-VA-WP-TR-1998-3009) is the other way round on every one of those, and is the
+release that has <code>for004.dat</code> with its <code>WRITE</code> and
+<code>FORMAT</code> cards. The drawing is identical either way — only the Messages
+panel and the Cases tab change. Switching re-checks the loaded deck in place.</p>
 <p class="sub"><b>Covered — <code>AXIBOD</code>/<code>FINSET</code> decks:</b>
 <code>AXIBOD</code> and <code>ELLBOD</code>
 (option 1 nose/centrebody/afterbody with CONE, OGIVE, POWER, HAACK and KARMAN shapes,
@@ -3228,6 +3452,9 @@ drawn nose measures exactly <code>LNOSE</code> (Figure 3). With option 2 body ta
 points are drawn as given.</p>
 <p class="sub">• Aerodynamic namelists (FLTCON, EXPR, TRIM, and the rest) are parsed and
 listed but have no geometric effect.</p>
+<p class="sub">• <code>DELETE</code> purges a namelist carried in by <code>SAVE</code>;
+where the same case then re-specifies that namelist, only what the case supplies is
+kept, so the inherited values do not show through.</p>
 `;
 
 </script>

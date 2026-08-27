@@ -13,7 +13,9 @@ your deck is not.
 
 Drop a `for005.dat`, `.dcm`, `.inp` or `.txt` input deck on the sidebar (or click to
 browse). The tool parses the Fortran namelists, works out which input form the deck
-uses, and draws the configuration in 3D.
+uses, and draws the configuration in 3D. A **Target release** picker below the deck says
+which Missile Datcom build to check it against — Rev 3/11 or Rev 5/97; see
+[Which DATCOM this targets](#which-datcom-this-targets).
 
 It is **view-only**. It does not run DATCOM, read `for006.dat` output, plot coefficients,
 or write anything.
@@ -35,12 +37,45 @@ or write anything.
 
 ## Which DATCOM this targets
 
-Built against the **1997 manual**, AFRL-VA-WP-TR-1998-3009, which documents **Missile
-Datcom Rev 5/97**, and the Digital DATCOM input namelist reference. The limits enforced
-are that release's: `ALPHA` up to 20 per case, four non-overlapping fin sets numbered
-front to back, and no `NVOR`, body `Z` camber, conic centrebody or `NINCR`. Later releases
-raise some of these, so a deck written for a newer build may trip a check here — the
-message says which release the feature arrived in.
+Two releases, chosen with the **Target release** picker under *Input deck*:
+
+| | Manual | Release |
+|---|---|---|
+| **Rev 3/11** (default) | AFRL-RB-WP-TR-2011-3071, the **2011 revision** | Rev 12, March 2011 |
+| **Rev 5/97** | AFRL-VA-WP-TR-1998-3009, the **1997 manual** | Rev 7, May 1997 |
+
+`BODY`/`SYNTHS` decks are read against the Digital DATCOM input namelist reference and
+are unaffected by the picker.
+
+Which release you target decides the array limits the checks enforce and which inputs are
+reported as not existing. **It does not change the drawing** — Figures 1, 6, 8, 9 and 10
+of the 1997 manual are Figures 1, 7, 9, 10 and 11 of the 2011 one, unchanged, as is the
+sign note under `DEFLCT`. Switching re-checks the loaded deck in place; the choice is
+kept in this browser.
+
+|  | Rev 5/97 | Rev 3/11 |
+|---|---|---|
+| `ALPHA` per case | 20 | **100** (raised in 7/07) |
+| `MACH`/`ALT`/`REN`/`VINF`/`TINF`/`PINF` | 20 | 20 |
+| Fin sets | 4, "non-overlapping", *must* be numbered front to back | **9** (8/08); order *should* be front to back, and governs vortex tracking rather than validity |
+| Co-located fin sets | an input error | permitted — it is how a horizontal and a vertical tail of differing planform share a station |
+| `$DEFLCT` | `DELTA1`–`4` | `DELTA1`–`9`; `XHINGE` and `SKEW` stay array size **4** |
+| `NVOR` | — | 3/11, 1–20 shed vortices per fin, default 1 |
+| Body `Z` camber | — | 1/06; must be run at `PHI` = 0 |
+| Conic centrebody | not handled | 1/06 |
+| `$PROTUB PHIPRO` | — | 8/08, one angle per protuberance |
+| `$TRIM NINCR` | — | 3/11, default 10; δ = 0 is always run when the bounds span it |
+| `$TRIM ASYM` | present | **deleted in 8/08** |
+| `$TRIM` bounds | both `DELMIN` and `DELMAX` required | either may be omitted; the other defaults to 0 |
+| `BETA` | tan⁻¹(v/u) | **sin⁻¹(v/V₀)** (8/08) |
+| `BETA` with `PHI` | `BETA` silently ignored | **fatal — the run stops** (7/07) |
+| `DAMP` at non-zero `PHI`/`BETA` | no restriction stated | damping derivatives not computed |
+| Machine-readable results | `for004.dat` via `WRITE`/`FORMAT` | `for042.csv`, always written, with headers |
+| 300-namelist limit under `SAVE` | yes | **yes, unchanged** |
+
+A deck aimed at the other release is not wrong, only aimed elsewhere, so each message
+that depends on the setting says which release the feature arrived in and offers the
+switch.
 
 ## Geometry checks
 
@@ -59,7 +94,16 @@ checks:
   against the radius at its own `PHIF` (plus `GAM`) rather than the semi-width, and
   `SSPAN(1)=0` seats each panel individually;
 - fin sets out of front-to-back order, or with no positive longitudinal gap, either of
-  which silently stops fin-shed vortices being tracked between them.
+  which silently stops fin-shed vortices being tracked between them. Under 5/97 that is
+  an input error outright; 3/11 drops the "non-overlapping" wording and reports only the
+  lost coupling, since co-locating two sets is how a horizontal and a vertical tail of
+  differing planform are put at the same station;
+- a cambered body (`Z`) run at non-zero `PHI`, which the 2011 manual forbids;
+- `NVOR` outside 1–20, or set on the aftmost fin set where it has nothing downstream to
+  shed into;
+- an all-moveable panel on fin set 5 or beyond, where `XHINGE` and `SKEW` — still array
+  size 4 while `DELTAn` reaches 9 — cannot specify the hinge line;
+- `BETA` and `PHI` in the same case: silently ignored under 5/97, fatal from 7/07 onward.
 
 It also checks the rules the manual states outright but the code will not enforce for
 you: that `PHIPRO` supplies an angle for every protuberance, that the member arrays cover
@@ -113,10 +157,12 @@ per case — the manual is explicit that it "is effective only for the case in w
 appears" — so ticking it emits `DAMP` in each one rather than only at the top. It is a
 control card, not a namelist, so it does not count against the 300.
 
-Later manuals state that damping derivatives are not computed when `PHI` or `BETA` is
-non-zero, which would gut a roll sweep. **That restriction does not apply to Rev 5/97** —
-a case run at `PHI=45` with zero deflections returns `CMQ` — so no warning is raised. Be
-aware of it if you ever move to a newer build.
+The 2011 manual states outright, under the `DAMP` control card, that **damping
+derivatives are not computed when `PHI` or `BETA` is non-zero** — which guts a roll sweep.
+The 5/97 `DAMP` paragraph carries no such sentence, and a 5/97-vintage build run at
+`PHI=45` with zero deflections does return `CMQ`. So the warning is raised under **3/11
+only**; under 5/97 the builder stays silent. If the two disagree for the build you
+actually run, the target release picker is how you say so.
 
 ### Sweeps that exceed the 300-namelist limit
 
@@ -145,7 +191,15 @@ Tick **PLOT (for003.dat)** to add the `PLOT` card, which makes DATCOM write tota
 and moment data — `ALPHA, CN, CM, CA, CY, CLN, CLL, DELTA` — to `for003.dat` as a
 fixed-format table, one zone per case. Far easier to read into MATLAB than the printed
 listing. `PLOT` applies to a whole run, so it is written once per file rather than per
-case.
+case. Under 3/11 the same card also writes `for020.dat` and `for021.dat`.
+
+The remaining output tick depends on the target release, since the two builds write
+different files. Under **5/97** it is **WRITE tables (for004.dat)**; under **3/11** it is
+**Fin tables (for043.csv)**, which adds `PRINT AERO SYNTHS`. `PRINT AERO` is a per-case
+card in the same way `DAMP` is — the manual: the `PRINT AERO` cards "are effective only
+for the case in which they appear" — so it is repeated in every case rather than written
+once per file. Like `DAMP` it is a control card, so it costs nothing against the 300. See
+[Getting results out](#getting-results-out).
 
 The *reserve for geometry* box is how many namelists the geometry case ahead of the sweep
 uses; that many are held back from the 300. It is **counted from the loaded deck** rather
@@ -160,6 +214,11 @@ always written out in full, so no file depends on another whichever mode you use
 
 Loading a deck does not disturb a sweep you have already set up — only the reserve is
 refreshed, since that is a property of the deck rather than a choice you made.
+
+There is a ceiling of 50,000 cases, which is about 170 files. Nine fin sets at five
+deflections each is nearly two million, and that is a few clicks away under a 3/11
+target, so the builder reports the count and what is multiplying out instead of trying
+to generate it.
 
 Your builder setup is kept in this browser's local storage, so a sweep survives a reload;
 **Reset** clears it. The deck itself is never stored. Loading a deck re-seeds the builder
@@ -183,13 +242,44 @@ namelists. Enabling both `BETA` and `PHI` is allowed but noted, since the code i
 ## Getting results out
 
 The printed listing is awkward to read back into MATLAB or Simulink. DATCOM will write
-machine-readable files instead, and the Cases tab can add the cards for you.
+machine-readable files instead, and the Cases tab can add the cards for you. **Which
+files exist depends on the release**, and this is the largest practical difference
+between the two.
+
+### Rev 3/11
+
+| File | Card | Contents |
+|---|---|---|
+| `for042.csv` | *none — always written* | The bulk of `for006.dat` as rows and columns with a header line: `CASE, MACH, RE, ALT, Q, BETA, PHI, SREF, XCG, LREF, ALPHA` and the full coefficient set including `CMQ`, `CLLP`, `CLNR`. |
+| `for043.csv` | `PRINT AERO SYNTHS` (or `BEND`, `HINGE`, or `PART`) | Per-fin-set and per-panel data: `CNx_IPB`…`CLLx_IPB`, `PBMx_Py`, `PHMx_Py`, `PCNx_Py`. |
+| `for003.dat` | `PLOT` | Total force and moment table. |
+| `for020.dat`, `for021.dat` | `PLOT` | AML and AVDS formats. `for021` carries `DELTA`; `for042.csv` does not. |
+| `for022.dat` | *none — always written* | Tecplot-compatible body and fin geometry. |
+| `for009.dat` | `PRINT GEOM BODY` | The body contour the code generated. This viewer can overlay it. |
+| `vpath*.dat` | `PRINT VORTEX` | Fin-shed vortex paths and strengths, **one file per α–Mach point per case**. Not offered as a tick: on a real sweep that is thousands of files. |
+
+The catch worth knowing: **`for042.csv` has no deflection column.** For a deflection
+sweep, match results back through `CASE`, which counts 1..N per file in the same order
+the generated `CASEID n/N  PHI=… DELTA1=…` lines number them. The generated file header
+says so. If you need the deflection in the data itself, `PLOT` and `for021.dat` carry it.
+
+Column order in `for042.csv` shifts with the input flags set, so read it by header name
+rather than by position — the manual says so explicitly.
+
+### Rev 5/97
 
 | File | Card | Contents |
 |---|---|---|
 | `for003.dat` | `PLOT` | Total force and moment table: `ALPHA, CN, CM, CA, CY, CLN, CLL, DELTA`, one zone per case. Static only. |
 | `for004.dat` | `FORMAT` + `WRITE` | Named data blocks in a format you choose — the route to static **and** dynamic data with the sweep variables alongside. |
 | `for009.dat` | `PRINT GEOM BODY` | The body contour the code generated. This viewer can overlay it. |
+
+`for004.dat` does not survive into 3/11: the 2011 manual lists no unit 4 in its
+input/output table and defines no `WRITE` or `FORMAT` control card. (One vestigial
+sentence in its §4.4 still mentions "user defined format data files", so a 3/11 binary
+may retain the capability undocumented — unverified here.) The **WRITE tables** tick is
+therefore offered under 5/97 only; under 3/11 the toolbar shows the **Fin tables
+(for043.csv)** tick in its place.
 
 **WRITE tables (for004.dat)** emits a working set:
 
@@ -202,8 +292,10 @@ WRITE DB1234,1,400
 ```
 
 `PLOT`, `FORMAT` and `WRITE` are effective for a whole run rather than one case, so they
-are written once per file — unlike `DAMP`, which has to repeat. The dynamic block is only
-written when `DAMP` is ticked, since nothing fills it otherwise.
+are written once per file — unlike `DAMP` and `PRINT AERO`, which have to repeat. The
+dynamic block is only written when `DAMP` is ticked, since nothing fills it otherwise.
+
+Everything from here to the end of this section is 5/97's `for004.dat` layout.
 
 ### Block names by configuration
 
@@ -301,31 +393,49 @@ format in parentheses and must precede the `WRITE` cards; the default if omitted
 There are two ways to give the pitch and yaw angles, and the choice matters more than it
 looks.
 
+> **The definition of β changed in 8/08.** Through 7/07 it was β′ = tan⁻¹(v/u); from
+> 8/08 onward it is β = sin⁻¹(v/V₀). The two are related by `tan β = tan β′ · cos α`, so
+> they agree at small α and diverge as α grows. Everything below holds for both, but the
+> formulas differ, and a `BETA` value copied from an old deck into a modern build is not
+> the same angle.
+
 **`ALPHA` + `BETA`** specifies body-axis angles. It is the natural form for a constant-β
 sweep, but the code converts internally to total angle of attack α_T and aerodynamic roll
-φ. In Rev 5/97, where β is defined as tan⁻¹(v/u):
+φ. Under **Rev 5/97**, with β′ = tan⁻¹(v/u):
 
 ```
-tan α_T = sqrt(tan²α + tan²β)
-tan φ   = tan β / tan α
+tan α_T = sqrt(tan²α + tan²β′)
+tan φ   = tan β′ / tan α
 ```
 
-The denominator vanishes at α = 0, so **α = 0 with non-zero β is a division by zero** and
-the coefficients come back as NaN. Negative α is degenerate for the same reason: α_T is
-positive by definition, so negative α has to be carried as a roll angle past 90°, which a
-single arctangent cannot recover. Neither is a limit on how large β may be — β = −8° is
-perfectly fine at α = 4°.
+Under **Rev 3/11**, with β = sin⁻¹(v/V₀):
+
+```
+cos α_T = cos α · cos β
+tan φ   = tan β / sin α
+```
+
+Either way the denominator vanishes at α = 0, so **α = 0 with non-zero β is a division by
+zero** and the coefficients come back as NaN. Negative α is degenerate for the same
+reason: α_T is positive by definition, so negative α has to be carried as a roll angle
+past 90°, which a single arctangent cannot recover. Neither is a limit on how large β may
+be — β = −8° is perfectly fine at α = 4°.
+
+Note also that from 7/07 onward, supplying `BETA` **and** `PHI` in one case is a fatal
+error that stops the run — under 5/97 the code merely ignored `BETA`. The builder blocks
+generation on 3/11 and warns on 5/97.
 
 **`ALPHA` + `PHI`** hands the code the pair it actually wants. When `PHI` is non-zero,
 `ALPHA` is read as the **total** angle of attack, so no conversion happens and there is no
-singularity. Going the other way:
+singularity. Going the other way (3/11 forms; replace the second with
+`tan β′ = tan α_T · sin φ` for 5/97):
 
 ```
 tan α = tan α_T · cos φ
-tan β = tan α_T · sin φ
+sin β = sin α_T · sin φ
 ```
 
-φ is not sideslip. Because `tan β = tan α_T sin φ`, **|β| can never exceed α_T**, and a
+φ is not sideslip. Because sin β = sin α_T · sin φ, **|β| can never exceed α_T**, and a
 case of constant φ traces a ray of constant β/α ratio rather than a line of constant β.
 
 ### Covering the envelope
@@ -380,13 +490,13 @@ deck never exercises are handled too.
 |---|---|
 | `AXIBOD` | Option 1 (nose / centrebody / afterbody) with `CONICAL`, `OGIVE`, `POWER`, `HAACK`, `KARMAN` noses; `BNOSE` blunting and `TRUNC` truncation; conic centrebodies; conical and ogival boattails and flares. Option 2 `NX`/`X`/`R` tables with `Z` camber. |
 | `ELLBOD` | Both options, with per-station ellipticity (`ENOSE`/`ECENTR`/`EAFT`, or `H`/`W`/`ELLIP`). |
-| `FINSET`n | Four sets in this release, though all nine are parsed and anything beyond four is flagged. Multi-segment planforms defined by explicit `XLE` or by `SWEEP`/`STA` chaining; `SSPAN(1)=0` auto-placement on the body mould line; `HEX`, `ARC`, `NACA` and `USER` sections; `NPANEL`, `PHIF`, `GAM`; `CFOC` trailing-edge devices, full or partial span. |
-| `DEFLCT` | `DELTAn` per panel. For an all-moveable panel the whole fin pivots about `XHINGE` with `SKEW`; where `CFOC` defines a trailing-edge device only that device deflects, about the straight hinge `CFOC` implies, and `XHINGE`/`SKEW` are correctly ignored. |
+| `FINSET`n | All nine sets are parsed and drawn; under a 5/97 target anything beyond four is flagged. Multi-segment planforms defined by explicit `XLE` or by `SWEEP`/`STA` chaining; `SSPAN(1)=0` auto-placement on the body mould line; `HEX`, `ARC`, `NACA` and `USER` sections; `NPANEL`, `PHIF`, `GAM`; `CFOC` trailing-edge devices, full or partial span; `NVOR`. |
+| `DEFLCT` | `DELTA1`–`DELTA9` per panel; `XHINGE` and `SKEW` reach only the first four sets, which is flagged where it matters. For an all-moveable panel the whole fin pivots about `XHINGE` with `SKEW`; where `CFOC` defines a trailing-edge device only that device deflects, about the straight hinge `CFOC` implies, and `XHINGE`/`SKEW` are correctly ignored. |
 | `PROTUB` | `VCYL`, `HCYL`, `BLOCK`, `FAIRING`, `LUG`, `SHOE` — drawn as simplified primitives. |
 | `INLET` | `2DSIDE`, `2DTOP`, `AXI`, lofted through the five `X`/`H`/`W` stations, with diverter. |
 | `REFQ` | `XCG` for the CG marker. |
 | `NACA` card | 1-, 4-, 5- and 6-series, plus supersonic `NACA-n-S-…` diamond, circular-arc and hexagonal sections drawn to their exact stated thickness and break points. |
-| `SAVE` / `DELETE` | Case-to-case namelist persistence, so a deck can swap `AXIBOD` for `ELLBOD` between cases. |
+| `SAVE` / `DELETE` | Case-to-case namelist persistence, so a deck can swap `AXIBOD` for `ELLBOD` between cases. Where a case deletes a namelist and then re-specifies the same one, only what that case supplies is kept — the manual: *"All previously saved namelists with the names specified will be purged … Any new inputs of the same namelist will be retained."* Control cards may sit anywhere in a case, so this does not depend on whether the `DELETE` came before or after the namelist. |
 
 **Decks built on `BODY`, `SYNTHS` and the `xxPLNF` planforms**
 
@@ -415,7 +525,8 @@ shipped with the tool; supply your own.
 
 ## Conventions implemented
 
-Taken from the 1997 manual — Figure 1 (body geometry), Figure 6 (fin break points),
+The same in both releases — the 2011 revision restates them unchanged. Cited here by
+their 1997 numbering: Figure 1 (body geometry), Figure 6 (fin break points),
 Figure 8 (fin numbering and orientation), Figure 9 (roll attitude), Figure 10 (HEX and ARC
 airfoils), and the sign note under namelist `DEFLCT`:
 
@@ -457,8 +568,28 @@ The Messages panel flags these per deck as they apply.
 datcomViz/
 ├── index.html          the whole application
 ├── README.md
+├── test/               node test/run.js — see test/README.md
 └── vendor/             three.js r147 (UMD) + OrbitControls, loaded from disk
 ```
 
-No build step and no dependencies to install. Deployed as a static site it is just these
-files; opened from disk it behaves identically.
+No build step and no dependencies to install. Deployed as a static site it is just
+`index.html` and `vendor/`; opened from disk it behaves identically.
+
+## Tests
+
+```
+node test/run.js
+```
+
+No dependencies and no test framework. The harness pulls the inline script out of
+`index.html` and runs it in a `vm` context against a stub DOM, so the tests drive the
+shipped parser, geometry checks and case builder rather than a copy of them. Two further
+groups run when pointed at the reference material:
+
+```
+DATCOMVIZ_REFERENCE=../datcomViz-reference node test/run.js
+```
+
+The strongest of those regenerates a real 2125-case, 8-part sweep and requires it to come
+back byte-for-byte identical to files this tool produced earlier — which is what pins the
+Rev 5/97 path down while the 3/11 support moves around it. See `test/README.md`.

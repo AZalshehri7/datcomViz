@@ -28,6 +28,11 @@ Points to encode when building it:
   run time. Worth surfacing in the UI rather than leaving as a trap.
 - Component build-up data is not produced when `TRIM` is selected, so it does not combine
   with a `BUILD` run.
+- `NINCR` and the δ = 0 fix are 3/11 only; `ASYM` is the reverse, present in 5/97 and
+  deleted in 8/08. The geometry checks already gate both on the target release, so a
+  `$TRIM` builder must do the same rather than emit one set of inputs for both. Under
+  5/97 both `DELMIN` and `DELMAX` are required; from 3/11 either may be omitted and the
+  other defaults to 0.
 
 ## `BODY`/`SYNTHS` parity
 
