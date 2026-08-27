@@ -13,7 +13,9 @@ your deck is not.
 
 Drop a `for005.dat`, `.dcm`, `.inp` or `.txt` input deck on the sidebar (or click to
 browse). The tool parses the Fortran namelists, works out which input form the deck
-uses, and draws the configuration in 3D.
+uses, and draws the configuration in 3D. A **Target release** picker below the deck says
+which Missile Datcom build to check it against — Rev 3/11 or Rev 5/97; see
+[Which DATCOM this targets](#which-datcom-this-targets).
 
 It is **view-only**. It does not run DATCOM, read `for006.dat` output, plot coefficients,
 or write anything.
