@@ -9,6 +9,14 @@ page loads `vendor/three.min.js` from disk, so it works offline and nothing you 
 ever leaves the machine. Case-builder settings are kept in the browser's local storage;
 your deck is not.
 
+> **This fork adds CFD setup.** On top of the viewer and case builder, this
+> branch adds two optional tabs — **CFD (HISA)** and **Domain** — that turn the
+> exported geometry into an OpenFOAM/HISA high-speed CFD case and the meshing
+> domain around it, written out as a bash script and an STL you copy or save.
+> The viewer, geometry checks and DATCOM case builder are untouched; the new
+> tabs are additive and generate text and mesh only — they run nothing. See
+> [CFD setup](#cfd-setup).
+
 ## What it does
 
 Drop a `for005.dat`, `.dcm`, `.inp` or `.txt` input deck on the sidebar (or click to
@@ -190,6 +198,110 @@ between airfoil sections — is what people actually want, and it is genuinely a
 program: a second geometry pipeline built from the parsed deck rather than from the
 display mesh, plus watertight consistently-oriented topology. Worth doing one day; not a
 variation on this.
+
+## CFD setup
+
+Two tabs sit on top of the STL exporter and reproduce, in the browser, the
+setup you would otherwise assemble by hand for the CSIR **HiSA** solver
+(a density-based compressible solver for OpenFOAM) together with a **cfMesh**
+domain around the airframe. Like the rest of the tool they write **text and a
+mesh only** — nothing runs here, and nothing leaves the machine. The generated
+script sets a case up on your own OpenFOAM machine when you run it.
+
+Axes are DATCOM's own throughout — **+X aft, +Y starboard, +Z up** — the same
+as the export, so the freestream at zero incidence runs `+X` and the `inlet`
+sits at `−X`, the `outlet` (wake) at `+X`.
+
+### CFD (HISA) tab
+
+Collects the HiSA case and cfMesh prompts as a form and emits a self-contained
+`setup_<case>.sh` you **Copy** or **Save**; run it on an OpenFOAM machine and it
+lays the case down.
+
+- **Freestream from flight conditions.** Enter Mach / altitude / α / β and the
+  velocity `U`, pressure `p∞` and temperature `T∞` are derived from the 1976
+  **ISA standard atmosphere** (piecewise to 86 km, Sutherland viscosity), with
+  `U` in DATCOM axes: `U = (V·cosα·cosβ, −V·sinβ, V·sinα·cosβ)`. A manual mode
+  takes `U`, `p`, `T` directly. **Pull from deck** reads Mach / α / β / altitude
+  from the loaded deck's `$FLTCON` and the units from `DIM`.
+- **Generated case.** `0/` (`U`, `p`, `T`, the turbulence fields, and a shared
+  `0/include/freestreamConditions`), `constant/` (`thermophysicalProperties`,
+  `turbulenceProperties`), `system/` (`controlDict`, `fvSchemes`, `fvSolution`,
+  `decomposeParDict`, `meshDict`), plus self-locating `makeDomain.sh`,
+  `mesh.sh` and `run.sh` (serial or `mpirun`).
+- **Turbulence.** Spalart–Allmaras or k-ω SST; low- or high-y⁺ wall-function
+  sets; `k`/`ω` seeded from turbulence intensity and length scale.
+- **Force coefficients in DATCOM body axes.** `dragDir (1 0 0)` → axial **CA**,
+  `liftDir (0 0 1)` → normal **CN**, `pitchAxis (0 1 0)` → **CM** (nose-up
+  positive), with a **CofR** field for the moment reference. Optional
+  post-processing objects (`yPlus`, `Cp`, `MachNo`, `Q`, `vorticity`,
+  `wallShearStress`, residuals).
+- **Per-patch mesh refinement.** A **Refine patch** dropdown lists every patch;
+  each carries its own refinement level and thickness, emitted as one
+  `localRefinement` and one boundary-layer block per patch.
+- **Advanced numerics.** The `fvSchemes` and `fvSolution` knobs documented in
+  the HiSA User Guide are exposed and defaulted to its recommended values —
+  flux and real-time schemes, turbulence divergence, GMRES and the pseudo-time
+  (SER) controls, relaxation.
+
+Boundary-condition, scheme and solver defaults follow a verified HiSA reference
+case and the HiSA User Guide (`boundaryCorrectedFixedValue` walls, `symmetry`
+patches, `bounded Gauss upwind` turbulence advection, the Poisson wall-distance
+`yPsi` solver, and so on).
+
+### Domain tab
+
+Builds the meshing domain around the exported geometry — the step you would
+otherwise do in CAD.
+
+- **Farfield box** around the geometry bounding box with asymmetric margins —
+  upstream `−X`, downstream `+X` (wake), `±Y`, ground `−Z`, top `+Z` — set
+  **relative** to the bbox or in **absolute** deck units, with an optional
+  ground-snap.
+- **Named patches.** The six faces route to `inlet` / `outlet` / `side_yMin` /
+  `side_yMax` / `ground` / `top`; any face left unticked merges into a single
+  `farfield`. Each geometry component keeps its own patch (`Body_AXIBOD`,
+  `Fin_set_1_…`, `Protuberances_…`), so the airframe arrives already
+  subdivided.
+- **Symmetry plane.** Optional clip about X/Y/Z at the bbox centre, the origin
+  or a custom value; the cut face becomes a `symmetry` patch and geometry the
+  far side of it is dropped.
+- **Output.** A combined multi-solid **ASCII STL** (`cfd_domain.stl`) whose
+  `solid` names are the cfMesh/snappyHexMesh patches, scaled to metres.
+- **3D preview.** The domain is drawn in the Geometry view — translucent,
+  colour-coded faces (inlet, outlet, farfield, symmetry, walls) plus a
+  wireframe outline. **View in 3D** switches to the Geometry tab and fits the
+  camera to the box; a toggle turns it off. It is display-only and never
+  exported.
+- **Use in CFD tab** hands the domain to the CFD tab — `surfaceFile`, the
+  wall-patch list, the farfield selector, the symmetry patch and the per-patch
+  refinement dropdown are all filled in.
+
+### Typical workflow
+
+1. Load a deck and set deflections, then **Export** the geometry as **ASCII
+   STL** (named solids need ASCII).
+2. **Domain** tab → set margins → **View in 3D** to check the box around the
+   airframe → **Save** `cfd_domain.stl` and **Use in CFD tab**.
+3. **CFD (HISA)** tab → **Pull from deck** or type Mach / altitude / α / β →
+   dial per-patch refinement → **Save** `setup_<case>.sh`.
+4. On an OpenFOAM + cfMesh + HiSA machine, put the STL under
+   `constant/triSurface/`, run the case's `mesh.sh` then `run.sh` — the script
+   prints the exact next steps.
+
+### Notes and limits
+
+- Everything is generated client-side; the tool runs neither DATCOM nor
+  OpenFOAM.
+- `inlet`/`outlet` use reflectionless characteristic-farfield conditions, which
+  suit an external-flow box; a driven internal duct would need the manual's
+  `characteristicVelocityInletOutput*` / `characteristicPressureInletOutput*`
+  conditions, which are not generated.
+- Neither STL records units, so the domain is scaled to metres on write and the
+  case is set up in SI; check the scale if you feed it a differently-scaled
+  surface.
+- HiSA is the CSIR High Speed Aerodynamic solver; see its User Guide for the
+  solver settings the generated dictionaries follow.
 
 ## Case builder
 
