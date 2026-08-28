@@ -109,6 +109,30 @@
   #casePane{display:none;overflow:hidden}
   #casePane.on{display:flex}
   #geomPane.off{display:none}
+  #cfdPane{position:absolute;inset:0;display:none;overflow:hidden}
+  #cfdPane.on{display:flex}
+  #cfdLeft{width:52%;min-width:380px;overflow-y:auto;padding:14px 16px;border-right:1px solid var(--line)}
+  #cfdRight{flex:1;display:flex;flex-direction:column;min-width:0}
+  #cfdBar{display:flex;gap:6px;align-items:center;flex-wrap:wrap;padding:10px 14px;border-bottom:1px solid var(--line)}
+  #cfdOut{flex:1;margin:0;padding:12px 14px;overflow:auto;white-space:pre;
+    font:11.5px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#c3ccd8}
+  #cfdLeft h4{margin:15px 0 7px;font-size:11px;color:var(--accent);text-transform:uppercase;letter-spacing:.6px}
+  #cfdLeft h4:first-child{margin-top:0}
+  .cfrow{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:5px 0}
+  .cfrow label{font-size:11.5px;color:var(--dim)}
+  .cfrow input[type=text],.cfrow select{width:158px}
+  .cfrow input.short{width:96px}
+  #cf_read{margin-top:9px;padding:8px 10px;background:var(--panel2);border-radius:5px;
+    font-size:11px;color:var(--dim);white-space:pre-line}
+  #domPane{position:absolute;inset:0;display:none;overflow:hidden}
+  #domPane.on{display:flex}
+  #domLeft{width:52%;min-width:380px;overflow-y:auto;padding:14px 16px;border-right:1px solid var(--line)}
+  #domRight{flex:1;display:flex;flex-direction:column;min-width:0}
+  #domBar{display:flex;gap:6px;align-items:center;flex-wrap:wrap;padding:10px 14px;border-bottom:1px solid var(--line)}
+  #domOut{flex:1;margin:0;padding:12px 14px;overflow:auto;white-space:pre-wrap;
+    font:11.5px/1.55 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#c3ccd8}
+  #domLeft h4{margin:15px 0 7px;font-size:11px;color:var(--accent);text-transform:uppercase;letter-spacing:.6px}
+  #domLeft h4:first-child{margin-top:0}
   #cbLeft{width:52%;min-width:380px;overflow-y:auto;padding:14px 16px;
     border-right:1px solid var(--line)}
   #cbRight{flex:1;display:flex;flex-direction:column;min-width:0}
@@ -269,6 +293,8 @@
     <div id="tabs">
       <button id="tab-geom" class="on">Geometry</button>
       <button id="tab-case">Cases</button>
+      <button id="tab-cfd">CFD (HISA)</button>
+      <button id="tab-dom">Domain</button>
     </div>
     <div id="panes">
     <div id="geomPane">
@@ -309,6 +335,33 @@
         <pre id="cbOut"></pre>
       </div>
     </div><!-- /casePane -->
+
+    <div id="cfdPane">
+      <div id="cfdLeft"></div>
+      <div id="cfdRight">
+        <div id="cfdBar">
+          <span id="cfdSummary" class="sub" style="flex:1;min-width:180px;font-size:11px"></span>
+          <button id="cfdPull" title="Pull Mach / altitude / alpha / beta from the loaded deck's $FLTCON">Pull from deck</button>
+          <button id="cfdCopy">Copy</button>
+          <button id="cfdSave">Save .sh</button>
+        </div>
+        <pre id="cfdOut"></pre>
+      </div>
+    </div><!-- /cfdPane -->
+
+    <div id="domPane">
+      <div id="domLeft"></div>
+      <div id="domRight">
+        <div id="domBar">
+          <span id="domSummary" class="sub" style="flex:1;min-width:180px;font-size:11px"></span>
+          <button id="domView" title="Show the domain box around the geometry in the 3D view">View in 3D</button>
+          <button id="domUseCfd" title="Set the CFD tab's surfaceFile and patch names from this domain">Use in CFD tab</button>
+          <button id="domCopy" title="Copy the wall-patch regex for the CFD tab">Copy patches</button>
+          <button id="domSave">Save .stl</button>
+        </div>
+        <pre id="domOut"></pre>
+      </div>
+    </div><!-- /domPane -->
     </div><!-- /panes -->
   </div>
 </div>
@@ -2239,6 +2292,8 @@ function rebuild() {
 }
 
 function loadText(text, name) {
+  if (typeof domPreviewClear === "function") domPreviewClear();
+  domPartsCache = null;
   try {
     CASES = parseDeck(text);
   } catch (e) {
@@ -3669,16 +3724,25 @@ function cbDownload(f) {
 
 /* ---- wiring -------------------------------------------------------------- */
 function cbShow(which) {
-  const g = which === "geom";
-  document.getElementById("geomPane").classList.toggle("off", !g);
-  document.getElementById("casePane").classList.toggle("on", !g);
-  document.getElementById("tab-geom").classList.toggle("on", g);
-  document.getElementById("tab-case").classList.toggle("on", !g);
-  if (!g && !CB.vars.length) { if (!cbRestore()) cbBuild(); cbRender(); }
-  if (!g) cbGenerate();
+  document.getElementById("geomPane").classList.toggle("off", which !== "geom");
+  document.getElementById("casePane").classList.toggle("on", which === "case");
+  document.getElementById("cfdPane").classList.toggle("on", which === "cfd");
+  document.getElementById("domPane").classList.toggle("on", which === "dom");
+  document.getElementById("tab-geom").classList.toggle("on", which === "geom");
+  document.getElementById("tab-case").classList.toggle("on", which === "case");
+  document.getElementById("tab-cfd").classList.toggle("on", which === "cfd");
+  document.getElementById("tab-dom").classList.toggle("on", which === "dom");
+  if (which === "case") {
+    if (!CB.vars.length) { if (!cbRestore()) cbBuild(); cbRender(); }
+    cbGenerate();
+  }
+  if (which === "cfd") { cfdInit(); cfdGenerate(); }
+  if (which === "dom") { domInit(); domGenerate(); }
 }
 document.getElementById("tab-geom").onclick = () => cbShow("geom");
 document.getElementById("tab-case").onclick = () => cbShow("case");
+document.getElementById("tab-cfd").onclick = () => cbShow("cfd");
+document.getElementById("tab-dom").onclick = () => cbShow("dom");
 document.getElementById("exBtn").onclick = exportRun;
 document.getElementById("exFormat").onchange = () => {
   document.getElementById("exNote").textContent = "";
@@ -3801,6 +3865,1250 @@ closed even individually.</p>
 where the same case then re-specifies that namelist, only what the case supplies is
 kept, so the inherited values do not show through.</p>
 `;
+
+
+/* ===== datcomViz CFD (OpenFOAM/HISA) tab ===== */
+/* =======================================================================
+   CFD (OpenFOAM / HISA) tab
+   Collects HISA case-setup + cfMesh prompts as a form and emits a bash
+   script (copy or save) that lays down the OpenFOAM case for the DATCOM
+   geometry exported from the Geometry tab. Flight conditions can be pulled
+   from the loaded deck's $FLTCON regime or entered by hand.
+   Runs entirely in the browser; the script is text only.
+   ======================================================================= */
+
+const CFD_RGAS = 287.05, CFD_GAMMA = 1.4, CFD_G0 = 9.80665;
+
+function cfdIsa(hm) {
+  const layers = [
+    [0, 288.15, -0.0065, 101325],
+    [11000, 216.65, 0, 22632.06],
+    [20000, 216.65, 0.001, 5474.889],
+    [32000, 228.65, 0.0028, 868.0187],
+    [47000, 270.65, 0, 110.9063],
+    [51000, 270.65, -0.0028, 66.93887],
+    [71000, 214.65, -0.002, 3.956420],
+    [84852, 186.946, 0, 0.3733836]
+  ];
+  let h = Math.max(hm, 0);
+  if (h > 86000) h = 86000;
+  let L = layers[0];
+  for (let i = 0; i < layers.length; i++) { if (h >= layers[i][0]) L = layers[i]; else break; }
+  const hb = L[0], Tb = L[1], a = L[2], Pb = L[3];
+  const T = Tb + a * (h - hb);
+  let P;
+  if (Math.abs(a) < 1e-12) P = Pb * Math.exp(-CFD_G0 * (h - hb) / (CFD_RGAS * Tb));
+  else P = Pb * Math.pow(T / Tb, -CFD_G0 / (a * CFD_RGAS));
+  const rho = P / (CFD_RGAS * T);
+  const aSound = Math.sqrt(CFD_GAMMA * CFD_RGAS * T);
+  const As = 1.4584e-6, Ts = 110.4;
+  const mu = As * Math.pow(T, 1.5) / (T + Ts);
+  return { T, P, rho, a: aSound, mu };
+}
+
+function cfdFreestream(mach, altM, alphaDeg, betaDeg) {
+  const at = cfdIsa(altM);
+  const V = mach * at.a;
+  const al = alphaDeg * Math.PI / 180, be = betaDeg * Math.PI / 180;
+  const Ux = V * Math.cos(al) * Math.cos(be);
+  const Uy = -V * Math.sin(be);
+  const Uz = V * Math.sin(al) * Math.cos(be);
+  return { V, Ux, Uy, Uz, T: at.T, P: at.P, rho: at.rho, a: at.a, mu: at.mu };
+}
+
+function cfdUnitMetres(u) {
+  u = (u || "").toUpperCase();
+  return u === "FT" ? 0.3048 : u === "IN" ? 0.0254 : u === "CM" ? 0.01
+       : u === "MM" ? 0.001 : u === "M" ? 1 : 1;
+}
+
+/* ---- OpenFOAM file bodies (final text, values inlined) ------------------ */
+
+function cfdG(x) {  // %g-ish
+  if (!isFinite(x)) return "0";
+  let s = Number(x).toPrecision(6);
+  if (s.indexOf(".") >= 0 && s.indexOf("e") < 0 && s.indexOf("E") < 0)
+    s = s.replace(/\.?0+$/, "");
+  return s;
+}
+
+function cfdHeader(cls, obj, loc) {
+  return [
+    "/*--------------------------------*- C++ -*----------------------------------*\\",
+    "  =========                 |",
+    "  \\      /  F ield         | OpenFOAM",
+    "   \\    /   O peration     |",
+    "    \\  /    A nd           |",
+    "     \\/     M anipulation  |",
+    "\\*---------------------------------------------------------------------------*/",
+    "FoamFile",
+    "{",
+    "    version     2.0;",
+    "    format      ascii;",
+    "    class       " + cls + ";",
+    "    location    \"" + loc + "\";",
+    "    object      " + obj + ";",
+    "}",
+    "// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //",
+    "", ""
+  ].join("\n");
+}
+
+function cfdWallPiped(wall) {
+  return wall.split(",").map(s => s.trim()).filter(Boolean).join("|");
+}
+
+function cfdDefaultFaces(cfg) {
+  let s = "    defaultFaces\n    {\n        type            zeroGradient;\n    }\n";
+  if (cfg.is2D) s += "    defaultFaces\n    {\n        type            empty;\n    }\n";
+  return s;
+}
+function cfdSym(cfg) {
+  if (!cfg.hasSym) return "";
+  return "    " + cfg.symPatch + "\n    {\n        type            symmetry;\n    }\n";
+}
+
+function cfdFileFreestream(cfg) {
+  return "// Freestream macro definitions -- #included by field files\n\n" +
+    "U               (" + cfg.Uvec + ");\n" +
+    "p               " + cfdG(cfg.pInf) + ";\n" +
+    "T               " + cfdG(cfg.TInf) + ";\n\n";
+}
+
+function cfdFileU(cfg) {
+  const wp = cfdWallPiped(cfg.wall);
+  let s = cfdHeader("volVectorField", "U", "0");
+  s += "#include \"include/freestreamConditions\"\n\n";
+  s += "dimensions      [0 1 -1 0 0 0 0];\n\n";
+  s += "internalField   uniform $U;\n\n";
+  s += "boundaryField\n{\n";
+  s += "    \"" + wp + "\"\n    {\n        type            boundaryCorrectedFixedValue;\n        value           uniform (0 0 0);\n    }\n";
+  const ff = ["    " + cfg.ff, "    inlet", "    outlet"];
+  ff.forEach(p => {
+    s += p + "\n    {\n        type            characteristicFarfieldVelocity;\n" +
+      "        U               $U;\n        p               $p;\n        T               $T;\n" +
+      "        value           $internalField;\n    }\n";
+  });
+  s += cfdSym(cfg) + cfdDefaultFaces(cfg) + "}\n\n";
+  return s;
+}
+
+function cfdFileScalarChar(cfg, obj, dims, kind) {
+  // kind: Pressure / Temperature
+  const wp = cfdWallPiped(cfg.wall);
+  const cls = "volScalarField";
+  let s = cfdHeader(cls, obj, "0");
+  s += "#include \"include/freestreamConditions\"\n\n";
+  s += "dimensions      " + dims + ";\n\n";
+  s += "internalField   uniform $" + (obj === "p" ? "p" : "T") + ";\n\n";
+  s += "boundaryField\n{\n";
+  s += "    \"" + wp + "\"\n    {\n        type            characteristicWall" + kind + ";\n" +
+    "        value           $internalField;\n    }\n";
+  ["    " + cfg.ff, "    inlet", "    outlet"].forEach(p => {
+    s += p + "\n    {\n        type            characteristicFarfield" + kind + ";\n" +
+      "        U               $U;\n        p               $p;\n        T               $T;\n" +
+      "        value           $internalField;\n    }\n";
+  });
+  s += cfdSym(cfg) + cfdDefaultFaces(cfg) + "}\n\n";
+  return s;
+}
+
+function cfdFileCalcScalar(cfg, obj, dims, wallType) {
+  const wp = cfdWallPiped(cfg.wall);
+  let s = cfdHeader("volScalarField", obj, "0");
+  s += "#include \"include/freestreamConditions\"\n\n";
+  s += "dimensions      " + dims + ";\n\n";
+  s += "internalField   uniform 0;\n\n";
+  s += "boundaryField\n{\n";
+  s += "    \"" + wp + "\"\n    {\n        type            " + wallType + ";\n        value           uniform 0;\n    }\n";
+  ["    " + cfg.ff, "    inlet", "    outlet"].forEach(p => {
+    s += p + "\n    {\n        type            calculated;\n        value           uniform 0;\n    }\n";
+  });
+  s += cfdSym(cfg) + cfdDefaultFaces(cfg) + "}\n\n";
+  return s;
+}
+
+function cfdFileNuTilda(cfg) {
+  const wp = cfdWallPiped(cfg.wall);
+  let s = cfdHeader("volScalarField", "nuTilda", "0");
+  s += "#include \"include/freestreamConditions\"\n\n";
+  s += "dimensions      [0 2 -1 0 0 0 0];\n\n";
+  s += "internalField   uniform 4e-4;\n\n";
+  s += "boundaryField\n{\n";
+  s += "    \"" + wp + "\"\n    {\n        type            boundaryCorrectedFixedValue;\n        value           uniform 0;\n    }\n";
+  ["    " + cfg.ff, "    inlet", "    outlet"].forEach(p => {
+    s += p + "\n    {\n        type            inletOutlet;\n        inletValue      uniform 3e-4;\n        value           uniform 4e-4;\n    }\n";
+  });
+  s += cfdSym(cfg) + cfdDefaultFaces(cfg) + "}\n\n";
+  return s;
+}
+
+function cfdFileK(cfg) {
+  const wp = cfdWallPiped(cfg.wall), k = cfdG(cfg.kInit);
+  const wfn = cfg.yplus === "low" ? "kLowReWallFunction" : "kqRWallFunction";
+  let s = cfdHeader("volScalarField", "k", "0");
+  s += "#include \"include/freestreamConditions\"\n\n";
+  s += "dimensions      [0 2 -2 0 0 0 0];\n\n";
+  s += "internalField   uniform " + k + ";\n\n";
+  s += "boundaryField\n{\n";
+  s += "    \"" + wp + "\"\n    {\n        type            " + wfn + ";\n        value           uniform " + k + ";\n    }\n";
+  ["    " + cfg.ff, "    inlet"].forEach(p => {
+    s += p + "\n    {\n        type            turbulentIntensityKineticEnergyInlet;\n" +
+      "        intensity       " + cfdG(cfg.ti) + ";\n        value           uniform " + k + ";\n    }\n";
+  });
+  s += "    outlet\n    {\n        type            inletOutlet;\n        inletValue      uniform " + k + ";\n        value           uniform " + k + ";\n    }\n";
+  s += cfdSym(cfg) + cfdDefaultFaces(cfg) + "}\n\n";
+  return s;
+}
+
+function cfdFileOmega(cfg) {
+  const wp = cfdWallPiped(cfg.wall), om = cfdG(cfg.omegaInit);
+  let s = cfdHeader("volScalarField", "omega", "0");
+  s += "#include \"include/freestreamConditions\"\n\n";
+  s += "dimensions      [0 0 -1 0 0 0 0];\n\n";
+  s += "internalField   uniform " + om + ";\n\n";
+  s += "boundaryField\n{\n";
+  s += "    \"" + wp + "\"\n    {\n        type            omegaWallFunction;\n        value           uniform " + om + ";\n    }\n";
+  ["    " + cfg.ff, "    inlet"].forEach(p => {
+    s += p + "\n    {\n        type            turbulentMixingLengthFrequencyInlet;\n" +
+      "        mixingLength    " + cfdG(cfg.lref) + ";\n        value           uniform " + om + ";\n    }\n";
+  });
+  s += "    outlet\n    {\n        type            inletOutlet;\n        inletValue      uniform " + om + ";\n        value           uniform " + om + ";\n    }\n";
+  s += cfdSym(cfg) + cfdDefaultFaces(cfg) + "}\n\n";
+  return s;
+}
+
+function cfdFileThermo(cfg) {
+  const ttype = cfg.flow === "euler" ? "const" : "sutherland";
+  let s = cfdHeader("dictionary", "thermophysicalProperties", "constant");
+  s += "thermoType\n{\n    type            hePsiThermo;\n    mixture         pureMixture;\n";
+  s += "    transport       " + ttype + ";\n    thermo          hConst;\n";
+  s += "    equationOfState perfectGas;\n    specie          specie;\n    energy          sensibleInternalEnergy;\n}\n\n";
+  s += "mixture\n{\n    specie\n    {\n        nMoles      1;\n        molWeight   28.966;\n    }\n";
+  s += "    thermodynamics\n    {\n        Cp          1005;\n        Hf          0;\n    }\n";
+  s += "    transport\n    {\n";
+  if (cfg.flow === "euler") s += "        mu          0;\n        Pr          1;\n";
+  else s += "        As          1.4584e-6;\n        Ts          110.33;\n";
+  s += "    }\n}\n\n";
+  return s;
+}
+
+function cfdFileTurbProps(cfg) {
+  let s = cfdHeader("dictionary", "turbulenceProperties", "constant");
+  if (cfg.flow === "euler" || cfg.flow === "laminar") s += "simulationType  laminar;\n\n";
+  else {
+    s += "simulationType  RAS;\n\nRAS\n{\n    RASModel        " + cfg.turb + ";\n";
+    s += "    turbulence      on;\n    printCoeffs     on;\n}\n\n";
+  }
+  return s;
+}
+
+function cfdFileControl(cfg) {
+  let s = cfdHeader("dictionary", "controlDict", "system");
+  s += "application     hisa;\n\nstartFrom       startTime;\nstartTime       0;\nstopAt          endTime;\n";
+  s += "endTime         " + cfdG(cfg.endTime) + ";\ndeltaT          " + cfdG(cfg.deltaT) + ";\n\n";
+  if (cfg.analysis === "transient" && cfg.adjust) {
+    s += "adjustTimeStep  yes;\nmaxCo           " + cfdG(cfg.maxCo) + ";\nmaxDeltaT       1e-3;\nwriteControl    adjustableRunTime;\n";
+  } else s += "writeControl    timeStep;\n";
+  s += "writeInterval   " + cfdG(cfg.writeInterval) + ";\n\n";
+  s += "purgeWrite      0;\nwriteFormat     ascii;\nwritePrecision  8;\nwriteCompression off;\n";
+  s += "timeFormat      general;\ntimePrecision   6;\nrunTimeModifiable yes;\n";
+  const wallList = cfg.wall.split(/[,|]/).map(x => x.trim()).filter(Boolean).join(" ");
+  if (cfg.forces || cfg.post) {
+    s += "\nfunctions\n{\n";
+    if (cfg.forces) {
+      s += "    // DATCOM body-axis coefficients: Cd -> CA (axial, +X aft),\n";
+      s += "    //   Cl -> CN (normal, +Z up), Cm -> CM (pitch about +Y, nose-up positive).\n";
+      s += "    forceCoeffs1\n    {\n        type            forceCoeffs;\n";
+      s += "        libs            (\"libforces.so\");\n        writeControl    timeStep;\n        writeInterval   1;\n";
+      s += "        patches         ( " + wallList + " );\n        rho             rhoInf;\n        rhoInf          " + cfdG(cfg.rhoInf) + ";\n";
+      s += "        liftDir         (" + cfg.liftDir + ");\n        dragDir         (" + cfg.dragDir + ");\n";
+      s += "        CofR            (" + cfg.cofr + ");\n        pitchAxis       (" + cfg.pitchAxis + ");\n";
+      s += "        magUInf         " + cfdG(cfg.magUInf) + ";\n        lRef            " + cfdG(cfg.lRefF) + ";\n        Aref            " + cfdG(cfg.Aref) + ";\n";
+      s += "    }\n";
+    }
+    if (cfg.post) {
+      if (cfg.flow === "rans") {
+        s += "    yPlus1\n    {\n        type            yPlus;\n        libs            (\"libfieldFunctionObjects.so\");\n        writeControl    writeTime;\n        patches         ( " + wallList + " );\n    }\n";
+        const rf = cfg.turb === "SpalartAllmaras" ? "nuTilda" : "k omega";
+        s += "    residuals1\n    {\n        type            residuals;\n        libs            (\"libutilityFunctionObjects.so\");\n        writeControl    timeStep;\n        writeInterval   1;\n        fields          (" + rf + ");\n    }\n";
+        s += "    wallShearStress1\n    {\n        type            wallShearStress;\n        libs            (\"libfieldFunctionObjects.so\");\n        writeControl    writeTime;\n        patches         ( " + wallList + " );\n    }\n";
+      }
+      s += "    MachNo1\n    {\n        type            MachNo;\n        libs            (\"libfieldFunctionObjects.so\");\n        writeControl    writeTime;\n    }\n";
+      s += "    vorticity1\n    {\n        type            vorticity;\n        libs            (\"libfieldFunctionObjects.so\");\n        writeControl    writeTime;\n    }\n";
+      s += "    Q1\n    {\n        type            Q;\n        libs            (\"libfieldFunctionObjects.so\");\n        writeControl    writeTime;\n    }\n";
+      s += "    pressureCoeff1\n    {\n        type            pressure;\n        libs            (\"libfieldFunctionObjects.so\");\n        mode            staticCoeff;\n        result          Cp;\n        rhoInf          " + cfdG(cfg.rhoInf) + ";\n        UInf            (" + cfg.Uvec + ");\n        pInf            " + cfdG(cfg.pInf) + ";\n        writeControl    writeTime;\n    }\n";
+    }
+    s += "}\n";
+  }
+  s += "\n";
+  return s;
+}
+
+function cfdFileSchemes(cfg) {
+  const rans = cfg.flow === "rans", sa = cfg.turb === "SpalartAllmaras";
+  let s = cfdHeader("dictionary", "fvSchemes", "system");
+  s += "fluxScheme      " + cfg.flux + ";\n\n";
+  const rt = cfg.analysis === "steady" ? "bounded dualTime rPseudoDeltaT steadyState"
+    : "dualTime rPseudoDeltaT " + (cfg.rtScheme === "CrankNicolson" ? "CrankNicolson " + cfdG(cfg.cnWeight) : cfg.rtScheme);
+  s += "ddtSchemes\n{\n    default     " + rt + ";\n}\n\n";
+  s += "gradSchemes\n{\n    default     cellLimited faceLeastSquares linear 0.6;\n    gradTVD     faceLeastSquares linear;\n";
+  if (rans) s += sa ? "    grad(nuTilda)   cellLimited Gauss linear 0.9;\n"
+                    : "    grad(k)         cellLimited Gauss linear 0.9;\n    grad(omega)     cellLimited Gauss linear 0.9;\n";
+  s += "}\n\n";
+  s += "divSchemes\n{\n    default     none;\n    div(tauMC)              Gauss linear;\n";
+  if (rans) {
+    const td = cfg.turbDiv === "limitedLinear" ? "limitedLinear 1" : "upwind";
+    if (cfg.analysis === "steady")
+      s += sa ? "    div(phi,nuTilda)        bounded Gauss " + td + ";\n"
+              : "    div(phi,k)              bounded Gauss " + td + ";\n    div(phi,omega)          bounded Gauss " + td + ";\n";
+    else
+      s += sa ? "    div(phi,nuTilda)    Gauss " + td + ";\n"
+              : "    div(phi,k)          Gauss " + td + ";\n    div(phi,omega)      Gauss " + td + ";\n";
+  }
+  s += "}\n\n";
+  s += "laplacianSchemes\n{\n    default                 Gauss linear corrected;\n    laplacian(muEff,U)      Gauss linear compact;\n    laplacian(alphaEff,e)   Gauss linear compact;\n}\n\n";
+  s += "interpolationSchemes\n{\n    default             linear;\n    reconstruct(rho)    wVanLeer gradTVD;\n    reconstruct(U)      wVanLeer gradTVD;\n    reconstruct(T)      wVanLeer gradTVD;\n}\n\n";
+  s += "snGradSchemes\n{\n    default     corrected;\n}\n\n";
+  s += "wallDist\n{\n    method      Poisson;\n}\n\n";
+  return s;
+}
+
+function cfdFileSolution(cfg) {
+  const rans = cfg.flow === "rans", tv = cfg.turb === "SpalartAllmaras" ? "nuTilda" : "k|omega";
+  let s = cfdHeader("dictionary", "fvSolution", "system");
+  s += "flowSolver\n{\n    solver          GMRES;\n    GMRES\n    {\n";
+  s += "        inviscidJacobian    LaxFriedrichs;\n        viscousJacobian     " + cfg.viscousJac + ";\n        preconditioner      LUSGS;\n";
+  s += "        maxIter             " + cfg.gMaxIter + ";\n        nKrylov             " + cfg.nKrylov + ";\n        solverTolRel        " + cfg.solverTolRel + " (" + cfg.solverTolRel + " " + cfg.solverTolRel + " " + cfg.solverTolRel + ") " + cfg.solverTolRel + ";\n    }\n}\n\n";
+  s += "pseudoTime\n{\n    pseudoTol                           1e-6 (1e-6 1e-6 1e-6) 1e-6;\n";
+  if (cfg.analysis !== "steady") s += "    nPseudoCorr                         " + cfg.nPseudo + ";\n";
+  s += "    pseudoCoNum                         " + cfdG(cfg.pco) + ";\n    pseudoCoNumMin                      " + cfdG(cfg.pcoMin) + ";\n    pseudoCoNumMax                      " + cfdG(cfg.pcoMax) + ";\n";
+  s += "    pseudoCoNumMaxIncreaseFactor        " + cfdG(cfg.pcoInc) + ";\n    pseudoCoNumMinDecreaseFactor        " + cfdG(cfg.pcoDec) + ";\n";
+  s += "    localTimestepping                   " + cfg.localTS + ";\n    localTimesteppingBounding           true;\n    localTimesteppingLowerBound         " + cfdG(cfg.ltBound) + ";\n}\n\n";
+  s += "solvers\n{\n";
+  if (rans) {
+    s += "    yPsi\n    {\n        solver          GAMG;\n        smoother        GaussSeidel;\n        cacheAgglomeration true;\n        nCellsInCoarsestLevel 10;\n        agglomerator    faceAreaPair;\n        mergeLevels     1;\n        tolerance       1e-6;\n        relTol          0;\n    }\n";
+    s += "    \"(" + tv + ")\"\n    {\n        solver          smoothSolver;\n        smoother        symGaussSeidel;\n        tolerance       1e-10;\n        relTol          0.1;\n        minIter         1;\n    }\n";
+    s += "    \"(" + tv + ")Final\"\n    {\n        solver          smoothSolver;\n        smoother        symGaussSeidel;\n        tolerance       1e-10;\n        relTol          0;\n        minIter         1;\n    }\n";
+  }
+  s += "}\n\n";
+  s += "relaxationFactors\n{\n";
+  if (rans) s += "    equations\n    {\n        \"(" + tv + ")\"     " + cfdG(cfg.turbRelax) + ";\n    }\n";
+  s += "}\n\n";
+  return s;
+}
+
+function cfdFileDecompose(cfg) {
+  let s = cfdHeader("dictionary", "decomposeParDict", "system");
+  s += "numberOfSubdomains  " + cfg.nSub + ";\n\nmethod              scotch;\n\n";
+  return s;
+}
+
+function cfdFileMeshDict(cfg) {
+  let s = cfdHeader("dictionary", "meshDict", "system");
+  s += "surfaceFile     \"" + cfg.surf + "\";\n\n";
+  s += "maxCellSize     " + cfdG(cfg.maxCell) + ";\n";
+  if (cfg.bCell) s += "boundaryCellSize " + cfdG(cfg.bCell) + ";\n";
+  s += "\n";
+  const refs = (cfg.refinements && cfg.refinements.length)
+    ? cfg.refinements
+    : (cfg.locLevels > 0 ? [{ patch: cfg.obj, levels: cfg.locLevels, thickness: cfg.locThick }] : []);
+  if (refs.length) {
+    const withRef = refs.filter(r => r.levels > 0);
+    if (withRef.length) {
+      s += "localRefinement\n{\n";
+      for (const r of withRef) {
+        s += "    " + r.patch + "\n    {\n        additionalRefinementLevels  " + r.levels + ";\n";
+        if (r.thickness) s += "        refinementThickness " + cfdG(r.thickness) + ";\n";
+        s += "    }\n";
+      }
+      s += "}\n\n";
+    }
+  }
+  if (cfg.layers) {
+    const blp = refs.length ? refs.map(r => r.patch) : [cfg.obj];
+    s += "boundaryLayers\n{\n    patchBoundaryLayers\n    {\n";
+    for (const p of blp) {
+      s += "        \"" + p + "\"\n        {\n            nLayers         " + cfg.nLayers + ";\n            thicknessRatio  " + cfdG(cfg.tratio) + ";\n";
+      if (cfg.firstLayer) s += "            maxFirstLayerThickness  " + cfdG(cfg.firstLayer) + ";\n";
+      s += "        }\n";
+    }
+    s += "    }\n\n    optimiseLayer   1;\n\n    optimisationParameters\n    {\n";
+    s += "        nSmoothNormals      7;\n        maxNumIterations    7;\n        featureSizeFactor   0.6;\n        reCalculateNormals  1;\n        relThicknessTol     0.1;\n    }\n}\n\n";
+  }
+  return s;
+}
+
+/* ---- makeDomain.sh : body STL + farfield box -> closed domain ---------- */
+
+function cfdMakeDomainScript(cfg) {
+  return [
+    "#!/bin/bash",
+    "# Auto-generated by datcomViz CFD tab.",
+    "# Wrap the exported body STL in a farfield box so cartesianMesh has a",
+    "# closed outer boundary for external flow, and scale to metres.",
+    "set -e",
+    "SELF=\"$(cd \"$(dirname \"$0\")\" && pwd)\"",
+    "TRI=\"$SELF/constant/triSurface\"",
+    "BODY=\"${1:-$TRI/body_raw.stl}\"",
+    "OBJ=\"" + cfg.obj + "\"",
+    "FF=\"" + cfg.ff + "\"",
+    "SCALE=\"" + cfdG(cfg.scale) + "\"",
+    "MULT=\"" + cfdG(cfg.ffMult) + "\"",
+    "OUT=\"$TRI/domain.stl\"",
+    "",
+    "if [ ! -f \"$BODY\" ]; then echo \"Body STL not found: $BODY\"; echo \"Export an ASCII STL from datcomViz and place it there (or pass its path).\"; exit 1; fi",
+    "",
+    "# 1. Ensure ASCII STL (needs OpenFOAM surfaceConvert if the export was binary).",
+    "if head -c 5 \"$BODY\" | grep -qi solid; then cp \"$BODY\" \"$TRI/_body_ascii.stl\";",
+    "else surfaceConvert \"$BODY\" \"$TRI/_body_ascii.stl\"; fi",
+    "",
+    "# 2. Rename solid to $OBJ and scale vertices to metres in one awk pass; collect bbox.",
+    "awk -v obj=\"$OBJ\" -v s=\"$SCALE\" '",
+    "  BEGIN{first=1}",
+    "  /^[ \\t]*solid/  {print \"solid \" obj; next}",
+    "  /^[ \\t]*endsolid/{print \"endsolid \" obj; next}",
+    "  /vertex/{x=$2*s;y=$3*s;z=$4*s;",
+    "    if(first){xn=xx=x;yn=yx=y;zn=zx=z;first=0}",
+    "    if(x<xn)xn=x;if(x>xx)xx=x;if(y<yn)yn=y;if(y>yx)yx=y;if(z<zn)zn=z;if(z>zx)zx=z;",
+    "    printf \"      vertex %g %g %g\\n\",x,y,z; next}",
+    "  /facet normal/{print \"  facet normal 0 0 0\"; next}",
+    "  {print}",
+    "  END{print xn,yn,zn,xx,yx,zx > \"'\"$TRI\"'/_bbox.txt\"}",
+    "' \"$TRI/_body_ascii.stl\" > \"$TRI/_body.stl\"",
+    "",
+    "read XN YN ZN XX YX ZX < \"$TRI/_bbox.txt\"",
+    "# 3. Farfield box: body bbox centre, size = MULT * max body extent.",
+    "python3 - \"$XN\" \"$YN\" \"$ZN\" \"$XX\" \"$YX\" \"$ZX\" \"$MULT\" \"$FF\" > \"$TRI/_ff.stl\" <<'PYEOF'",
+    "import sys",
+    "xn,yn,zn,xx,yx,zx,mult=map(float,sys.argv[1:8]); ff=sys.argv[8]",
+    "cx,cy,cz=(xn+xx)/2,(yn+yx)/2,(zn+zx)/2",
+    "L=max(xx-xn,yx-yn,zx-zn)*mult",
+    "h=L/2",
+    "p=[(cx-h,cy-h,cz-h),(cx+h,cy-h,cz-h),(cx+h,cy+h,cz-h),(cx-h,cy+h,cz-h),",
+    "   (cx-h,cy-h,cz+h),(cx+h,cy-h,cz+h),(cx+h,cy+h,cz+h),(cx-h,cy+h,cz+h)]",
+    "q=[(0,1,2),(0,2,3),(4,6,5),(4,7,6),(0,5,1),(0,4,5),(1,6,2),(1,5,6),",
+    "   (2,7,3),(2,6,7),(3,4,0),(3,7,4)]",
+    "print('solid '+ff)",
+    "for a,b,c in q:",
+    "    print(' facet normal 0 0 0'); print('  outer loop')",
+    "    for i in (a,b,c): print('   vertex %g %g %g'%p[i])",
+    "    print('  endloop'); print(' endfacet')",
+    "print('endsolid '+ff)",
+    "PYEOF",
+    "",
+    "# 4. Combine body + farfield into one multi-solid surface.",
+    "cat \"$TRI/_body.stl\" \"$TRI/_ff.stl\" > \"$OUT\"",
+    "rm -f \"$TRI/_body_ascii.stl\" \"$TRI/_body.stl\" \"$TRI/_ff.stl\" \"$TRI/_bbox.txt\"",
+    "echo \"Wrote $OUT  (patches: $OBJ, $FF)\"",
+    ""
+  ].join("\n");
+}
+
+/* ---- top-level generated script ---------------------------------------- */
+
+function cfdBuildScript(cfg) {
+  const files = [];
+  const put = (path, body) => files.push("cat > \"$CASE/" + path + "\" <<'DVZ_EOF'\n" + body + "\nDVZ_EOF\n");
+
+  put("0/include/freestreamConditions", cfdFileFreestream(cfg));
+  put("0/U", cfdFileU(cfg));
+  put("0/p", cfdFileScalarChar(cfg, "p", "[1 -1 -2 0 0 0 0]", "Pressure"));
+  put("0/T", cfdFileScalarChar(cfg, "T", "[0 0 0 1 0 0 0]", "Temperature"));
+  if (cfg.flow === "rans") {
+    put("0/nut", cfdFileCalcScalar(cfg, "nut", "[0 2 -1 0 0 0 0]",
+      cfg.yplus === "low" ? "boundaryCorrectedNutLowReWallFunction" : "nutUSpaldingWallFunction"));
+    put("0/alphat", cfdFileCalcScalar(cfg, "alphat", "[1 -1 -1 0 0 0 0]",
+      cfg.yplus === "low" ? "boundaryCorrectedFixedValue" : "compressible::alphatWallFunction"));
+    if (cfg.turb === "SpalartAllmaras") put("0/nuTilda", cfdFileNuTilda(cfg));
+    else { put("0/k", cfdFileK(cfg)); put("0/omega", cfdFileOmega(cfg)); }
+  }
+  put("constant/thermophysicalProperties", cfdFileThermo(cfg));
+  put("constant/turbulenceProperties", cfdFileTurbProps(cfg));
+  put("system/controlDict", cfdFileControl(cfg));
+  put("system/fvSchemes", cfdFileSchemes(cfg));
+  put("system/fvSolution", cfdFileSolution(cfg));
+  put("system/meshDict", cfdFileMeshDict(cfg));
+  if (cfg.nSub > 1) put("system/decomposeParDict", cfdFileDecompose(cfg));
+
+  const meshCmd = cfg.nSub > 1
+    ? "decomposePar\nmpirun -np " + cfg.nSub + " hisa -parallel\nreconstructPar"
+    : "hisa";
+
+  const mesh = [
+    "#!/bin/bash",
+    "set -e",
+    "CASE=\"$(cd \"$(dirname \"$0\")\" && pwd)\"",
+    "cd \"$CASE\"",
+    "rm -rf constant/polyMesh processor*",
+    "echo \"Running cartesianMesh...\"; cartesianMesh",
+    "echo \"Running checkMesh...\"; checkMesh",
+    "touch mesh.foam",
+    "echo \"Meshing done.\"",
+    ""
+  ].join("\n");
+
+  const run = [
+    "#!/bin/bash",
+    "set -e",
+    "CASE=\"$(cd \"$(dirname \"$0\")\" && pwd)\"",
+    "cd \"$CASE\"",
+    (cfg.nSub > 1
+      ? "echo \"decomposePar...\"; decomposePar\necho \"hisa -parallel (" + cfg.nSub + ")...\"; mpirun -np " + cfg.nSub + " hisa -parallel\necho \"reconstructPar...\"; reconstructPar"
+      : "echo \"Running hisa...\"; hisa"),
+    "touch solution.foam",
+    "echo \"Run complete. Open solution.foam in ParaView.\"",
+    ""
+  ].join("\n");
+
+  const head = [
+    "#!/bin/bash",
+    "# =====================================================================",
+    "#  OpenFOAM/HISA case setup  --  generated by datcomViz CFD tab",
+    "#  Geometry : " + (cfg.deckName || "(DATCOM export)"),
+    "#  Regime   : Mach " + cfdG(cfg.mach) + "  alt " + cfdG(cfg.altM) + " m  " +
+      "alpha " + cfdG(cfg.alpha) + " deg  beta " + cfdG(cfg.beta) + " deg",
+    "#  U_inf    : (" + cfg.Uvec + ") m/s   |U|=" + cfdG(cfg.V) + "   p=" + cfdG(cfg.pInf) + " Pa   T=" + cfdG(cfg.TInf) + " K",
+    "#  Axes     : DATCOM  +X aft, +Y starboard, +Z up  (mesh scaled to metres)",
+    "# =====================================================================",
+    "set -e",
+    "SELF=\"$(cd \"$(dirname \"$0\")\" && pwd)\"",
+    "CASE=\"$SELF/" + cfg.caseName + "\"",
+    "",
+    "mkdir -p \"$CASE/0/include\" \"$CASE/constant/triSurface\" \"$CASE/system\"",
+    ""
+  ].join("\n");
+
+  const sub = [
+    "cat > \"$CASE/makeDomain.sh\" <<'DVZ_EOF'\n" + cfdMakeDomainScript(cfg) + "\nDVZ_EOF\n",
+    "cat > \"$CASE/mesh.sh\" <<'DVZ_EOF'\n" + mesh + "\nDVZ_EOF\n",
+    "cat > \"$CASE/run.sh\" <<'DVZ_EOF'\n" + run + "\nDVZ_EOF\n",
+    "chmod +x \"$CASE\"/makeDomain.sh \"$CASE\"/mesh.sh \"$CASE\"/run.sh",
+    ""
+  ].join("\n");
+
+  const tail = [
+    "# Drop the exported body STL in if it sits beside this script.",
+    "for f in \"" + (cfg.stlName || "") + "\" *-in.stl *.stl; do",
+    "  [ -n \"$f\" ] && [ -f \"$SELF/$f\" ] && cp \"$SELF/$f\" \"$CASE/constant/triSurface/body_raw.stl\" && echo \"Copied $f -> constant/triSurface/body_raw.stl\" && break",
+    "done",
+    "",
+    "echo \"\"",
+    "echo \"Case written to: $CASE\"",
+    "echo \"Next steps (on your OpenFOAM + cfMesh + HISA machine):\"",
+    "echo \"  1. Put the ASCII STL export at $CASE/constant/triSurface/body_raw.stl\"",
+    "echo \"  2. bash $CASE/makeDomain.sh          # wraps body in a farfield box, scales to m\"",
+    "echo \"  3. bash $CASE/mesh.sh                # cartesianMesh + checkMesh\"",
+    "echo \"  4. bash $CASE/run.sh                 # hisa" + (cfg.nSub > 1 ? " in parallel" : "") + "\"",
+    ""
+  ].join("\n");
+
+  return head + files.join("") + sub + tail;
+}
+
+/* export for node test */
+
+/* ---- CFD tab: form + wiring -------------------------------------------- */
+
+let cfdBuilt = false, cfdLastScript = "";
+let cfdRefine = {};   // patch name -> { levels, thickness }
+
+function cfdPatchList() {
+  return String((document.getElementById("cf_wall") || {}).value || "geometry")
+    .split(/[|,]/).map(s => s.trim()).filter(Boolean);
+}
+function cfdRefreshPatches() {
+  const sel = document.getElementById("cf_obj");
+  if (!sel) return;
+  const list = cfdPatchList();
+  list.forEach(p => { if (!cfdRefine[p]) cfdRefine[p] = { levels: 6, thickness: 0.05 }; });
+  const cur = sel.value;
+  sel.innerHTML = list.map(p => '<option value="' + p + '">' + p + "</option>").join("");
+  sel.value = list.indexOf(cur) >= 0 ? cur : (list[0] || "");
+  cfdLoadPatchRefine();
+}
+function cfdLoadPatchRefine() {
+  const p = (document.getElementById("cf_obj") || {}).value;
+  const r = cfdRefine[p] || { levels: 6, thickness: 0.05 };
+  document.getElementById("cf_loclev").value = r.levels;
+  document.getElementById("cf_locthick").value = (r.thickness || r.thickness === 0) ? r.thickness : "";
+}
+
+const CFD_FORM_HTML = [
+  '<h4>Flight regime</h4>',
+  '<div class="cfrow"><label>Freestream source</label><select id="cf_mode">',
+  '<option value="compute">Compute from Mach / altitude / \u03b1 / \u03b2</option>',
+  '<option value="manual">Enter U, p, T directly</option></select></div>',
+  '<div class="cfrow"><label>Mach</label><input type="text" class="short" id="cf_mach" value="0.8"></div>',
+  '<div class="cfrow"><label>Altitude</label><span style="display:flex;gap:6px">',
+  '<input type="text" class="short" id="cf_alt" value="0" style="width:88px">',
+  '<select id="cf_altUnit" style="width:64px"><option value="ft">ft</option><option value="m">m</option><option value="km">km</option></select></span></div>',
+  '<div class="cfrow"><label>Angle of attack \u03b1 [deg]</label><input type="text" class="short" id="cf_alpha" value="0"></div>',
+  '<div class="cfrow"><label>Sideslip \u03b2 [deg]</label><input type="text" class="short" id="cf_beta" value="0"></div>',
+  '<div class="cfrow"><label>U (Ux Uy Uz) [m/s]</label><input type="text" id="cf_U" value=""></div>',
+  '<div class="cfrow"><label>p\u221e [Pa]</label><input type="text" class="short" id="cf_p" value="101325"></div>',
+  '<div class="cfrow"><label>T\u221e [K]</label><input type="text" class="short" id="cf_T" value="288.15"></div>',
+  '<div id="cf_read"></div>',
+
+  '<h4>Case setup (HISA)</h4>',
+  '<div class="cfrow"><label>Case name</label><input type="text" id="cf_name" value="datcom_cfd"></div>',
+  '<div class="cfrow"><label>Analysis</label><select id="cf_analysis"><option value="steady">steady</option><option value="transient">transient</option></select></div>',
+  '<div class="cfrow"><label>Flow model</label><select id="cf_flow"><option value="rans">rans</option><option value="euler">euler</option><option value="laminar">laminar</option></select></div>',
+  '<div class="cfrow"><label>Turbulence model</label><select id="cf_turb"><option value="kOmegaSST">kOmegaSST</option><option value="SpalartAllmaras">SpalartAllmaras</option></select></div>',
+  '<div class="cfrow"><label>Wall y+ regime</label><select id="cf_yplus"><option value="low">low</option><option value="high">high</option></select></div>',
+  '<div class="cfrow"><label>Turb intensity I</label><input type="text" class="short" id="cf_ti" value="0.01"></div>',
+  '<div class="cfrow"><label>Turb length [m]</label><input type="text" class="short" id="cf_lref" value="0.01"></div>',
+  '<div class="cfrow"><label>Wall patch</label><input type="text" id="cf_wall" value="geometry"></div>',
+  '<div class="cfrow"><label>Farfield patch</label><input type="text" id="cf_ff" value="farfield"></div>',
+  '<div class="cfrow"><label>2D case</label><input type="checkbox" id="cf_2d"></div>',
+  '<div class="cfrow"><label>Symmetry plane</label><span style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="cf_sym"><input type="text" class="short" id="cf_symName" value="symmetry" style="width:100px"></span></div>',
+  '<div class="cfrow"><label>endTime</label><input type="text" class="short" id="cf_end" value="2000"></div>',
+  '<div class="cfrow"><label>deltaT</label><input type="text" class="short" id="cf_dt" value="1"></div>',
+  '<div class="cfrow"><label>writeInterval</label><input type="text" class="short" id="cf_wi" value="100"></div>',
+  '<div class="cfrow"><label>maxCo (transient)</label><input type="text" class="short" id="cf_maxco" value="50"></div>',
+  '<div class="cfrow"><label>adjustTimeStep</label><input type="checkbox" id="cf_adjust"></div>',
+  '<div class="cfrow"><label>Flux scheme</label><select id="cf_flux"><option value="AUSMPlusUp">AUSMPlusUp</option><option value="HLLC">HLLC</option></select></div>',
+  '<div class="cfrow"><label>pseudoCoNum</label><input type="text" class="short" id="cf_pco" value="0.2"></div>',
+  '<div class="cfrow"><label>pseudoCoNumMax</label><input type="text" class="short" id="cf_pcomax" value="5"></div>',
+  '<div class="cfrow"><label>Force coefficients (DATCOM axes)</label><input type="checkbox" id="cf_forces"></div>',
+  '<div class="cfrow"><label>CofR (moment ref, deck units)</label><input type="text" class="short" id="cf_cofr" value="0 0 0"></div>',
+  '<div class="cfrow"><label>Aref [m\u00b2]</label><input type="text" class="short" id="cf_aref" value="1"></div>',
+  '<div class="cfrow"><label>lRef [m]</label><input type="text" class="short" id="cf_lreff" value="1"></div>',
+  '<div class="cfrow"><label>Post fields (yPlus, Cp, Ma, Q)</label><input type="checkbox" id="cf_post" checked></div>',
+  '<div class="cfrow"><label>Subdomains (1=serial)</label><input type="text" class="short" id="cf_nsub" value="4"></div>',
+
+  '<h4>Mesh (cfMesh)</h4>',
+  '<div class="cfrow"><label>surfaceFile</label><input type="text" id="cf_surf" value="constant/triSurface/domain.stl"></div>',
+  '<div class="cfrow"><label>Geometry units</label><select id="cf_gunit"><option value="M">M</option><option value="FT">FT</option><option value="IN">IN</option><option value="CM">CM</option><option value="MM">MM</option></select></div>',
+  '<div class="cfrow"><label>Scale to metres</label><input type="text" class="short" id="cf_scale" value="1"></div>',
+  '<div class="cfrow"><label>Farfield box \u00d7 body</label><input type="text" class="short" id="cf_ffmult" value="20"></div>',
+  '<div class="cfrow"><label>maxCellSize [m]</label><input type="text" class="short" id="cf_maxcell" value="0.2"></div>',
+  '<div class="cfrow"><label>boundaryCellSize [m]</label><input type="text" class="short" id="cf_bcell" value=""></div>',
+  '<div class="cfrow"><label>Refine patch</label><select id="cf_obj"></select></div>',
+  '<div class="cfrow"><label>Local refine levels</label><input type="text" class="short" id="cf_loclev" value="6"></div>',
+  '<div class="cfrow"><label>Refine thickness [m]</label><input type="text" class="short" id="cf_locthick" value="0.05"></div>',
+  '<div class="cfrow"><label>Boundary layers</label><input type="checkbox" id="cf_layers" checked></div>',
+  '<div class="cfrow"><label>nLayers</label><input type="text" class="short" id="cf_nlayers" value="10"></div>',
+  '<div class="cfrow"><label>thicknessRatio</label><input type="text" class="short" id="cf_tratio" value="1.2"></div>',
+  '<div class="cfrow"><label>maxFirstLayer [m]</label><input type="text" class="short" id="cf_first" value=""></div>',
+
+  '<h4>Advanced numerics (HiSA manual)</h4>',
+  '<div class="cfrow"><label>Turbulence div scheme</label><select id="cf_turbdiv"><option value="upwind">upwind (1st order)</option><option value="limitedLinear">limitedLinear 1</option></select></div>',
+  '<div class="cfrow"><label>Real-time scheme (transient)</label><select id="cf_rtscheme"><option value="backward">backward</option><option value="Euler">Euler</option><option value="CrankNicolson">CrankNicolson</option></select></div>',
+  '<div class="cfrow"><label>Crank-Nicolson \u03c6</label><input type="text" class="short" id="cf_cnweight" value="0.9"></div>',
+  '<div class="cfrow"><label>viscousJacobian</label><select id="cf_viscousjac"><option value="laplacian">laplacian</option><option value="spectralRadius">spectralRadius</option></select></div>',
+  '<div class="cfrow"><label>GMRES maxIter</label><input type="text" class="short" id="cf_gmaxiter" value="20"></div>',
+  '<div class="cfrow"><label>GMRES nKrylov</label><input type="text" class="short" id="cf_nkrylov" value="8"></div>',
+  '<div class="cfrow"><label>GMRES solverTolRel</label><input type="text" class="short" id="cf_solvertolrel" value="1e-2"></div>',
+  '<div class="cfrow"><label>nPseudoCorr (transient)</label><input type="text" class="short" id="cf_npseudo" value="20"></div>',
+  '<div class="cfrow"><label>pseudoCoNumMin</label><input type="text" class="short" id="cf_pcomin" value="0.1"></div>',
+  '<div class="cfrow"><label>pseudoCoNum increase \u00d7</label><input type="text" class="short" id="cf_pcoinc" value="1.05"></div>',
+  '<div class="cfrow"><label>pseudoCoNum decrease \u00d7</label><input type="text" class="short" id="cf_pcodec" value="0.1"></div>',
+  '<div class="cfrow"><label>localTimestepping</label><select id="cf_localts"><option value="true">true</option><option value="false">false</option></select></div>',
+  '<div class="cfrow"><label>localTS lowerBound</label><input type="text" class="short" id="cf_ltbound" value="0.95"></div>',
+  '<div class="cfrow"><label>Turbulence relaxation</label><input type="text" class="short" id="cf_turbrelax" value="0.5"></div>'
+].join("");
+
+function cfdGenerate() {
+  const gid = id => document.getElementById(id);
+  if (!gid("cf_mach")) return;
+  const V_ = id => String(gid(id).value == null ? "" : gid(id).value).trim();
+  const N_ = (id, d) => { const x = parseFloat(V_(id)); return isFinite(x) ? x : d; };
+  const mode = V_("cf_mode");
+  const altUnit = V_("cf_altUnit"), altRaw = N_("cf_alt", 0);
+  const altM = altUnit === "m" ? altRaw : altUnit === "km" ? altRaw * 1000 : altRaw * 0.3048;
+  const mach = N_("cf_mach", 0.8), alpha = N_("cf_alpha", 0), beta = N_("cf_beta", 0);
+
+  let Ux, Uy, Uz, pInf, TInf, rho, V;
+  if (mode === "manual") {
+    const u = V_("cf_U").split(/[\s,]+/).map(parseFloat);
+    Ux = u[0] || 0; Uy = u[1] || 0; Uz = u[2] || 0; V = Math.hypot(Ux, Uy, Uz);
+    pInf = N_("cf_p", 101325); TInf = N_("cf_T", 288.15); rho = pInf / (287.05 * TInf);
+  } else {
+    const f = cfdFreestream(mach, altM, alpha, beta);
+    Ux = f.Ux; Uy = f.Uy; Uz = f.Uz; V = f.V; pInf = f.P; TInf = f.T; rho = f.rho;
+    gid("cf_U").value = Ux.toFixed(4) + " " + Uy.toFixed(4) + " " + Uz.toFixed(4);
+    gid("cf_p").value = cfdG(pInf); gid("cf_T").value = cfdG(TInf);
+  }
+  const manual = mode === "manual";
+  gid("cf_U").readOnly = !manual; gid("cf_p").readOnly = !manual; gid("cf_T").readOnly = !manual;
+
+  const flow = V_("cf_flow"), analysis = V_("cf_analysis"), turb = V_("cf_turb"), yplus = V_("cf_yplus");
+  const ti = N_("cf_ti", 0.01), lref = N_("cf_lref", 0.01);
+  const kInit = 1.5 * Math.pow(ti * V, 2);
+  const omegaInit = Math.sqrt(kInit) / (Math.pow(0.09, 0.25) * lref);
+
+  const gunit = V_("cf_gunit"), scale = N_("cf_scale", cfdUnitMetres(gunit));
+  // sync the editor (selected patch) into the per-patch map, then build the list
+  const selPatch = (gid("cf_obj") || {}).value;
+  const locLevels = Math.round(N_("cf_loclev", 6));
+  const locThick = V_("cf_locthick") ? N_("cf_locthick", 0) : 0;
+  if (selPatch) cfdRefine[selPatch] = { levels: isFinite(locLevels) ? locLevels : 6, thickness: locThick };
+  const patchList = cfdPatchList();
+  patchList.forEach(p => { if (!cfdRefine[p]) cfdRefine[p] = { levels: 6, thickness: 0.05 }; });
+  const refinements = patchList.map(p => ({ patch: p, levels: cfdRefine[p].levels, thickness: cfdRefine[p].thickness }));
+
+  const cfg = {
+    deckName: (typeof DECK !== "undefined" && DECK && DECK.name) ? DECK.name : "",
+    stlName: (typeof exportStem === "function") ? exportStem() + "-in.stl" : "",
+    caseName: (V_("cf_name") || "datcom_cfd").replace(/[^\w.-]+/g, "_"),
+    mach, altM, alpha, beta, V,
+    Uvec: Ux.toFixed(4) + " " + Uy.toFixed(4) + " " + Uz.toFixed(4),
+    pInf, TInf, rhoInf: rho, magUInf: V,
+    analysis, flow, turb, yplus, ti, lref, kInit, omegaInit,
+    wall: V_("cf_wall") || "geometry", ff: V_("cf_ff") || "farfield",
+    is2D: gid("cf_2d").checked, hasSym: gid("cf_sym").checked, symPatch: V_("cf_symName") || "symmetry",
+    endTime: N_("cf_end", analysis === "steady" ? 2000 : 0.01),
+    deltaT: N_("cf_dt", analysis === "steady" ? 1 : 1e-6),
+    writeInterval: N_("cf_wi", 100), maxCo: N_("cf_maxco", 50), adjust: gid("cf_adjust").checked,
+    flux: V_("cf_flux"), pco: N_("cf_pco", 0.2), pcoMax: N_("cf_pcomax", 5),
+    rtScheme: V_("cf_rtscheme") || "backward", cnWeight: N_("cf_cnweight", 0.9),
+    turbDiv: V_("cf_turbdiv") || "upwind", viscousJac: V_("cf_viscousjac") || "laplacian",
+    gMaxIter: Math.round(N_("cf_gmaxiter", 20)), nKrylov: Math.round(N_("cf_nkrylov", 8)),
+    solverTolRel: V_("cf_solvertolrel") || "1e-2", nPseudo: Math.round(N_("cf_npseudo", 20)),
+    pcoMin: N_("cf_pcomin", 0.1), pcoInc: N_("cf_pcoinc", 1.05), pcoDec: N_("cf_pcodec", 0.1),
+    localTS: V_("cf_localts") || "true", ltBound: N_("cf_ltbound", 0.95), turbRelax: N_("cf_turbrelax", 0.5),
+    forces: gid("cf_forces").checked, post: gid("cf_post").checked,
+    liftDir: "0 0 1",
+    dragDir: "1 0 0",
+    pitchAxis: "0 1 0", cofr: V_("cf_cofr") || "0 0 0",
+    Aref: N_("cf_aref", 1), lRefF: N_("cf_lreff", 1),
+    nSub: Math.max(1, Math.round(N_("cf_nsub", 4))),
+    surf: V_("cf_surf") || "constant/triSurface/domain.stl", obj: V_("cf_obj") || "geometry",
+    scale, ffMult: N_("cf_ffmult", 20),
+    maxCell: N_("cf_maxcell", 0.2), bCell: V_("cf_bcell") ? N_("cf_bcell", 0) : "",
+    locLevels, locThick, refinements,
+    layers: gid("cf_layers").checked, nLayers: Math.round(N_("cf_nlayers", 10)),
+    tratio: N_("cf_tratio", 1.2), firstLayer: V_("cf_first") ? N_("cf_first", 0) : ""
+  };
+
+  cfdLastScript = cfdBuildScript(cfg);
+  gid("cfdOut").textContent = cfdLastScript;
+  gid("cfdSummary").textContent =
+    "M " + cfdG(mach) + " \u00b7 alt " + cfdG(altM) + " m \u00b7 \u03b1 " + cfdG(alpha) +
+    "\u00b0 \u00b7 \u03b2 " + cfdG(beta) + "\u00b0  \u2192  |U|=" + cfdG(V) + " m/s, p=" +
+    cfdG(pInf) + " Pa, T=" + cfdG(TInf) + " K";
+  gid("cf_read").textContent =
+    "Derived: a=" + cfdG(cfdIsa(altM).a) + " m/s   \u03c1=" + cfdG(rho) +
+    " kg/m\u00b3   k=" + cfdG(kInit) + "   \u03c9=" + cfdG(omegaInit);
+}
+
+function cfdPullFromDeck() {
+  try {
+    const gid = id => document.getElementById(id);
+    const cse = (typeof CASES !== "undefined") ? CASES[CASE_I] : null;
+    if (!cse) return;
+    const fc = (typeof NL === "function") ? NL(cse, "FLTCON") : null;
+    const arr = k => { if (!fc) return null; try { const a = narr(fc, k); return a && a.length ? a : null; } catch (e) { return null; } };
+    const mach = arr("MACH"), alpha = arr("ALPHA") || arr("ALSCHD"), alt = arr("ALT");
+    const beta = fc && fc.BETA && fc.BETA[0];
+    if (mach) gid("cf_mach").value = mach[0];
+    if (alpha) gid("cf_alpha").value = alpha[0];
+    if (alt) gid("cf_alt").value = alt[0];
+    if (beta !== undefined && beta !== null) gid("cf_beta").value = beta;
+    if (cse.units) { gid("cf_gunit").value = cse.units.toUpperCase(); gid("cf_scale").value = cfdG(cfdUnitMetres(cse.units)); }
+    if (typeof exportStem === "function") {
+      gid("cf_name").value = (exportStem() + "_cfd").replace(/[^\w.-]+/g, "_");
+    }
+    cfdGenerate();
+  } catch (e) { console.error(e); }
+}
+
+function cfdInit() {
+  if (cfdBuilt) return;
+  document.getElementById("cfdLeft").innerHTML = CFD_FORM_HTML;
+  cfdBuilt = true;
+  document.querySelectorAll("#cfdLeft input,#cfdLeft select,#cfdLeft textarea").forEach(el => {
+    if (el.id === "cf_obj" || el.id === "cf_wall") return;   // handled below (order matters)
+    el.addEventListener("input", cfdGenerate);
+    el.addEventListener("change", cfdGenerate);
+  });
+  document.getElementById("cf_obj").addEventListener("change", () => { cfdLoadPatchRefine(); cfdGenerate(); });
+  ["input", "change"].forEach(ev =>
+    document.getElementById("cf_wall").addEventListener(ev, () => { cfdRefreshPatches(); cfdGenerate(); }));
+  document.getElementById("cf_gunit").addEventListener("change", e => {
+    document.getElementById("cf_scale").value = cfdG(cfdUnitMetres(e.target.value));
+  });
+  document.getElementById("cfdPull").onclick = cfdPullFromDeck;
+  document.getElementById("cfdCopy").onclick = () => {
+    navigator.clipboard.writeText(cfdLastScript || document.getElementById("cfdOut").textContent).then(() => {
+      const b = document.getElementById("cfdCopy"), o = b.textContent;
+      b.textContent = "Copied"; setTimeout(() => { b.textContent = o; }, 1200);
+    });
+  };
+  document.getElementById("cfdSave").onclick = () => {
+    const name = (document.getElementById("cf_name").value || "datcom_cfd").replace(/[^\w.-]+/g, "_");
+    const blob = new Blob([cfdLastScript || ""], { type: "text/x-sh" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob); a.download = "setup_" + name + ".sh";
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  };
+  cfdRefreshPatches();
+  if (typeof CASES !== "undefined" && CASES.length) cfdPullFromDeck();
+}
+
+
+/* ===== datcomViz Domain tab ===== */
+/* =======================================================================
+   Domain tab -- build a rectangular CFD domain around the for005 geometry
+   and emit a combined multi-solid ASCII STL whose solid names are the
+   cfMesh / snappyHexMesh patches. Reproduces the FreeCAD CFD_Domain_Builder
+   workflow in the browser: asymmetric margins (relative to bbox or absolute),
+   box faces routed to inlet/outlet/sides/ground/top or merged to farfield,
+   optional symmetry-plane clip, and one named patch per geometry component.
+   Axes: +X aft (downstream), +Y starboard, +Z up -- so inlet is -X, outlet +X.
+   ======================================================================= */
+
+const DOM_RESERVED = ["inlet", "outlet", "farfield", "symmetry",
+                      "side_yMin", "side_yMax", "ground", "top"];
+
+function domNormal(t, i) {  // face normal of tri at offset i, unit or zero
+  const ax = t[i], ay = t[i + 1], az = t[i + 2];
+  const ux = t[i + 3] - ax, uy = t[i + 4] - ay, uz = t[i + 5] - az;
+  const wx = t[i + 6] - ax, wy = t[i + 7] - ay, wz = t[i + 8] - az;
+  let nx = uy * wz - uz * wy, ny = uz * wx - ux * wz, nz = ux * wy - uy * wx;
+  const L = Math.hypot(nx, ny, nz);
+  return L > 1e-20 ? [nx / L, ny / L, nz / L] : [0, 0, 0];
+}
+
+function domSanitizePatch(label, used) {
+  let name = String(label).trim();
+  name = name.replace(/\(([^)]*)\)/g, " $1 ");           // unwrap "Body (AXIBOD)"
+  name = name.replace(/[^A-Za-z0-9_]+/g, "_").replace(/^_+|_+$/g, "");
+  if (!name) name = "geometry";
+  if (DOM_RESERVED.indexOf(name) >= 0) name = name + "_geom";
+  let base = name, k = 2;
+  while (used && used.has(name)) { name = base + "_" + k; k++; }
+  if (used) used.add(name);
+  return name;
+}
+
+function domBBox(parts) {
+  let xn = Infinity, yn = Infinity, zn = Infinity, xx = -Infinity, yx = -Infinity, zx = -Infinity;
+  for (const p of parts) {
+    const t = p.tris;
+    for (let i = 0; i < t.length; i += 3) {
+      const x = t[i], y = t[i + 1], z = t[i + 2];
+      if (x < xn) xn = x; if (x > xx) xx = x;
+      if (y < yn) yn = y; if (y > yx) yx = y;
+      if (z < zn) zn = z; if (z > zx) zx = z;
+    }
+  }
+  return { xn, yn, zn, xx, yx, zx };
+}
+
+function domQuad(p0, p1, p2, p3, outward) {
+  let tris = p0.concat(p1, p2, p0, p2, p3);
+  const n = domNormal(tris, 0);
+  if (n[0] * outward[0] + n[1] * outward[1] + n[2] * outward[2] < 0)
+    tris = p0.concat(p2, p1, p0, p3, p2);
+  return tris;
+}
+
+/* Six box faces, keyed x_minus..z_plus, each two outward-facing triangles. */
+function domBoxFaces(x0, x1, y0, y1, z0, z1) {
+  const P = (x, y, z) => [x, y, z];
+  return {
+    x_minus: domQuad(P(x0, y0, z0), P(x0, y1, z0), P(x0, y1, z1), P(x0, y0, z1), [-1, 0, 0]),
+    x_plus:  domQuad(P(x1, y0, z0), P(x1, y1, z0), P(x1, y1, z1), P(x1, y0, z1), [1, 0, 0]),
+    y_minus: domQuad(P(x0, y0, z0), P(x1, y0, z0), P(x1, y0, z1), P(x0, y0, z1), [0, -1, 0]),
+    y_plus:  domQuad(P(x0, y1, z0), P(x1, y1, z0), P(x1, y1, z1), P(x0, y1, z1), [0, 1, 0]),
+    z_minus: domQuad(P(x0, y0, z0), P(x1, y0, z0), P(x1, y1, z0), P(x0, y1, z0), [0, 0, -1]),
+    z_plus:  domQuad(P(x0, y0, z1), P(x1, y0, z1), P(x1, y1, z1), P(x0, y1, z1), [0, 0, 1])
+  };
+}
+
+function domClipTris(tris, axis, val, keepPos) {
+  const k = axis === "X" ? 0 : axis === "Y" ? 1 : 2;
+  const out = [];
+  const tol = 1e-9;
+  for (let i = 0; i < tris.length; i += 9) {
+    const c = (tris[i + k] + tris[i + 3 + k] + tris[i + 6 + k]) / 3;
+    if (keepPos ? c >= val - tol : c <= val + tol)
+      for (let j = 0; j < 9; j++) out.push(tris[i + j]);
+  }
+  return out;
+}
+
+function domSolid(name, tris, scale) {
+  const f = v => (Math.abs(v) < 1e-12 ? 0 : v * scale).toExponential(6);
+  const L = ["solid " + name];
+  for (let i = 0; i < tris.length; i += 9) {
+    const n = domNormal(tris, i);
+    L.push("  facet normal " + n[0].toExponential(6) + " " + n[1].toExponential(6) + " " + n[2].toExponential(6),
+           "    outer loop");
+    for (let k = 0; k < 9; k += 3)
+      L.push("      vertex " + f(tris[i + k]) + " " + f(tris[i + k + 1]) + " " + f(tris[i + k + 2]));
+    L.push("    endloop", "  endfacet");
+  }
+  L.push("endsolid " + name);
+  return L.join("\n");
+}
+
+/* Main: parts = [{name, tris}], cfg = margins/keep/sym/scale. */
+function domBuild(parts, cfg) {
+  const b = domBBox(parts);
+  const Lx = b.xx - b.xn, Ly = b.yx - b.yn, Lz = b.zx - b.zn;
+  const m = cfg.margins;
+  let dxm, dxp, dym, dyp, dzm, dzp;
+  if (cfg.relative) {
+    dxm = Lx * m.x_minus; dxp = Lx * m.x_plus;
+    dym = Ly * m.y_minus; dyp = Ly * m.y_plus;
+    dzm = Lz * m.z_minus; dzp = Lz * m.z_plus;
+  } else {
+    dxm = m.x_minus; dxp = m.x_plus; dym = m.y_minus;
+    dyp = m.y_plus;  dzm = m.z_minus; dzp = m.z_plus;
+  }
+  let x0 = b.xn - dxm, x1 = b.xx + dxp;
+  let y0 = b.yn - dym, y1 = b.yx + dyp;
+  let z0 = cfg.groundSnap ? b.zn : b.zn - dzm, z1 = b.zx + dzp;
+
+  // Symmetry: resolve plane value, shrink the domain to one side, mark the face.
+  let symFace = null, sym = null;
+  if (cfg.sym && cfg.sym.enable) {
+    const axis = cfg.sym.axis;
+    let val;
+    if (cfg.sym.mode === "center")
+      val = axis === "X" ? 0.5 * (b.xn + b.xx) : axis === "Y" ? 0.5 * (b.yn + b.yx) : 0.5 * (b.zn + b.zx);
+    else if (cfg.sym.mode === "origin") val = 0;
+    else val = cfg.sym.value;
+    const keepPos = cfg.sym.keepPos;
+    sym = { axis, val, keepPos };
+    if (axis === "X") { if (keepPos) { if (val < x1) { x0 = val; symFace = "x_minus"; } } else { if (val > x0) { x1 = val; symFace = "x_plus"; } } }
+    if (axis === "Y") { if (keepPos) { if (val < y1) { y0 = val; symFace = "y_minus"; } } else { if (val > y0) { y1 = val; symFace = "y_plus"; } } }
+    if (axis === "Z") { if (keepPos) { if (val < z1) { z0 = val; symFace = "z_minus"; } } else { if (val > z0) { z1 = val; symFace = "z_plus"; } } }
+  }
+
+  const faces = domBoxFaces(x0, x1, y0, y1, z0, z1);
+  const keep = cfg.keep;
+  const routing = {
+    x_minus: keep.inlet ? "inlet" : "farfield",
+    x_plus:  keep.outlet ? "outlet" : "farfield",
+    y_minus: keep.sides ? "side_yMin" : "farfield",
+    y_plus:  keep.sides ? "side_yMax" : "farfield",
+    z_minus: keep.ground ? "ground" : "farfield",
+    z_plus:  keep.top ? "top" : "farfield"
+  };
+  if (symFace) routing[symFace] = "symmetry";
+
+  const boxPatch = {};                 // name -> tris
+  for (const src of Object.keys(faces)) {
+    const dst = routing[src];
+    (boxPatch[dst] = boxPatch[dst] || []).push.apply(boxPatch[dst], faces[src]);
+  }
+
+  const scale = cfg.scale || 1;
+  const solids = [];
+  const patches = [];
+  const geomNames = [];
+
+  if (keep.geometry) {
+    const used = new Set(DOM_RESERVED);
+    for (const p of parts) {
+      let tris = p.tris;
+      if (sym) tris = domClipTris(tris, sym.axis, sym.val, sym.keepPos);
+      if (tris.length < 9) continue;
+      const name = domSanitizePatch(p.name, used);
+      geomNames.push(name);
+      solids.push(domSolid(name, tris, scale));
+      patches.push({ name, ntri: tris.length / 9, kind: "geometry" });
+    }
+  }
+  const boxNames = [];
+  for (const name of Object.keys(boxPatch)) {
+    solids.push(domSolid(name, boxPatch[name], scale));
+    patches.push({ name, ntri: boxPatch[name].length / 9, kind: "box" });
+    boxNames.push(name);
+  }
+
+  const header = "solid " + (cfg.title || "cfd_domain") + " -- generated by datcomViz Domain tab";
+  const stl = solids.join("\n") + "\n";
+
+  return {
+    stl,
+    patches,
+    geomNames,
+    boxNames,
+    scale,
+    routing,
+    symFace,
+    extents: {
+      x0: x0 * scale, x1: x1 * scale, y0: y0 * scale, y1: y1 * scale, z0: z0 * scale, z1: z1 * scale,
+      Lx: (x1 - x0) * scale, Ly: (y1 - y0) * scale, Lz: (z1 - z0) * scale
+    },
+    extentsRaw: { x0, x1, y0, y1, z0, z1 },
+    bboxRaw: b,
+    sym: sym ? { axis: sym.axis, val: sym.val * scale, keepPos: sym.keepPos, face: symFace } : null
+  };
+}
+
+
+/* ---- Domain tab: form + wiring ----------------------------------------- */
+
+let domBuilt = false, domLastStl = "", domLast = null, domPartsCache = null, domCacheSig = "";
+
+const DOM_FORM_HTML = [
+  '<h4>Geometry source</h4>',
+  '<div class="cfrow"><label>Use visible components only</label><input type="checkbox" id="dm_vis"></div>',
+
+  '<h4>Domain margins</h4>',
+  '<div class="cfrow"><label>Margin mode</label><select id="dm_mode"><option value="rel">Relative (\u00d7 bbox length)</option><option value="abs">Absolute (deck units)</option></select></div>',
+  '<div class="cfrow"><label>Upstream \u2212X (nose)</label><input type="text" class="short" id="dm_xm" value="3"></div>',
+  '<div class="cfrow"><label>Downstream +X (wake)</label><input type="text" class="short" id="dm_xp" value="8"></div>',
+  '<div class="cfrow"><label>Side \u2212Y</label><input type="text" class="short" id="dm_ym" value="3"></div>',
+  '<div class="cfrow"><label>Side +Y</label><input type="text" class="short" id="dm_yp" value="3"></div>',
+  '<div class="cfrow"><label>Ground \u2212Z</label><input type="text" class="short" id="dm_zm" value="3"></div>',
+  '<div class="cfrow"><label>Top +Z</label><input type="text" class="short" id="dm_zp" value="3"></div>',
+  '<div class="cfrow"><label>Snap ground to geometry zMin</label><input type="checkbox" id="dm_snap"></div>',
+
+  '<h4>Patches  (unticked box faces \u2192 farfield)</h4>',
+  '<div class="cfrow"><label>inlet (\u2212X)</label><input type="checkbox" id="dm_inlet" checked></div>',
+  '<div class="cfrow"><label>outlet (+X)</label><input type="checkbox" id="dm_outlet" checked></div>',
+  '<div class="cfrow"><label>sides \u00b1Y separately</label><input type="checkbox" id="dm_sides"></div>',
+  '<div class="cfrow"><label>ground (\u2212Z)</label><input type="checkbox" id="dm_ground"></div>',
+  '<div class="cfrow"><label>top (+Z)</label><input type="checkbox" id="dm_top"></div>',
+  '<div class="cfrow"><label>geometry patches (per component)</label><input type="checkbox" id="dm_geom" checked></div>',
+
+  '<h4>Symmetry plane</h4>',
+  '<div class="cfrow"><label>Enable symmetry plane</label><input type="checkbox" id="dm_sym"></div>',
+  '<div class="cfrow"><label>Axis</label><select id="dm_symaxis"><option value="Y">Y</option><option value="X">X</option><option value="Z">Z</option></select></div>',
+  '<div class="cfrow"><label>Plane at</label><select id="dm_symmode"><option value="center">bbox center</option><option value="origin">world origin (0)</option><option value="custom">custom (deck units)</option></select></div>',
+  '<div class="cfrow"><label>Custom value</label><input type="text" class="short" id="dm_symval" value="0"></div>',
+  '<div class="cfrow"><label>Keep side</label><select id="dm_symkeep"><option value="pos">+ side</option><option value="neg">\u2212 side</option></select></div>',
+
+  '<h4>Output</h4>',
+  '<div class="cfrow"><label>Show domain in Geometry view</label><input type="checkbox" id="dm_show" checked></div>',
+  '<div class="cfrow"><label>Geometry units</label><select id="dm_gunit"><option value="M">M</option><option value="FT">FT</option><option value="IN">IN</option><option value="CM">CM</option><option value="MM">MM</option></select></div>',
+  '<div class="cfrow"><label>Scale to metres</label><input type="text" class="short" id="dm_scale" value="1"></div>',
+  '<div class="cfrow"><label>File name</label><input type="text" id="dm_name" value="cfd_domain.stl"></div>'
+].join("");
+
+function domHarvestParts(visibleOnly) {
+  const sig = (typeof DECK !== "undefined" && DECK ? DECK.name : "") + "|" + CASE_I + "|" + (visibleOnly ? "vis" : "all") + "|" + (typeof PARTS !== "undefined" ? PARTS.length : 0);
+  if (domPartsCache && domCacheSig === sig) return domPartsCache;
+  const parts = withTrueDeflection(() => harvestModel(visibleOnly));
+  domPartsCache = parts; domCacheSig = sig;
+  return parts;
+}
+
+function domReadCfg() {
+  const gid = id => document.getElementById(id);
+  const V_ = id => String(gid(id).value == null ? "" : gid(id).value).trim();
+  const N_ = (id, d) => { const x = parseFloat(V_(id)); return isFinite(x) ? x : d; };
+  return {
+    visibleOnly: gid("dm_vis").checked,
+    relative: V_("dm_mode") !== "abs",
+    margins: {
+      x_minus: N_("dm_xm", 3), x_plus: N_("dm_xp", 8),
+      y_minus: N_("dm_ym", 3), y_plus: N_("dm_yp", 3),
+      z_minus: N_("dm_zm", 3), z_plus: N_("dm_zp", 3)
+    },
+    groundSnap: gid("dm_snap").checked,
+    keep: {
+      inlet: gid("dm_inlet").checked, outlet: gid("dm_outlet").checked,
+      sides: gid("dm_sides").checked, ground: gid("dm_ground").checked,
+      top: gid("dm_top").checked, geometry: gid("dm_geom").checked
+    },
+    sym: {
+      enable: gid("dm_sym").checked, axis: V_("dm_symaxis") || "Y",
+      mode: V_("dm_symmode") || "center", value: N_("dm_symval", 0),
+      keepPos: V_("dm_symkeep") !== "neg"
+    },
+    scale: N_("dm_scale", 1),
+    title: (V_("dm_name") || "cfd_domain").replace(/\.stl$/i, "")
+  };
+}
+
+function domGenerate() {
+  const gid = id => document.getElementById(id);
+  if (!gid("dm_xm")) return;
+  const out = gid("domOut");
+  if (typeof PARTS === "undefined" || !PARTS.length) {
+    out.textContent = "Load a DATCOM deck first — the domain is built around its for005 geometry.";
+    gid("domSummary").textContent = "No geometry loaded";
+    domLast = null; domLastStl = "";
+    domPreviewClear();
+    return;
+  }
+  const cfg = domReadCfg();
+  const parts = domHarvestParts(cfg.visibleOnly);
+  const r = domBuild(parts, cfg);
+  domLast = r; domLastStl = r.stl;
+
+  const e = r.extents, g = cfg.scale;
+  const un = "m";
+  const rows = r.patches.map(p =>
+    "  " + (p.name + "                            ").slice(0, 28) + p.kind.padEnd(9) + String(p.ntri).padStart(7) + " tri");
+  const wallRegex = r.geomNames.join("|");
+  const boxList = r.boxNames.join(", ");
+  const symLine = r.sym
+    ? "Symmetry:   " + r.sym.axis + " = " + cfdG(r.sym.val) + " " + un + "  (keep " + (r.sym.keepPos ? "+" : "\u2212") + " side, face \u2192 symmetry)\n"
+    : "";
+  out.textContent =
+    "Domain extents (" + un + "):\n" +
+    "  X [" + cfdG(e.x0) + ", " + cfdG(e.x1) + "]   Y [" + cfdG(e.y0) + ", " + cfdG(e.y1) + "]   Z [" + cfdG(e.z0) + ", " + cfdG(e.z1) + "]\n" +
+    "  size " + cfdG(e.Lx) + " \u00d7 " + cfdG(e.Ly) + " \u00d7 " + cfdG(e.Lz) + "\n" +
+    symLine + "\n" +
+    "Patches (" + r.patches.length + "):\n" + rows.join("\n") + "\n\n" +
+    "Box patches: " + boxList + "\n" +
+    "Wall (geometry) patches: " + (r.geomNames.length || 0) + "\n\n" +
+    "To use in the CFD (HISA) tab (or click \u201cUse in CFD tab\u201d):\n" +
+    "  surfaceFile  =  constant/triSurface/" + (gid("dm_name").value || "cfd_domain.stl") + "\n" +
+    "  wall patch   =  " + (wallRegex || "(none)") + "\n" +
+    "  farfield     =  " + (r.boxNames.indexOf("farfield") >= 0 ? "farfield" : boxList) + "\n" +
+    "  (skip makeDomain.sh — this file already includes the farfield box)\n\n" +
+    "Facets: " + r.patches.reduce((a, p) => a + p.ntri, 0).toLocaleString() + "   \u00b7   " +
+    "place the saved file at constant/triSurface/ and mesh with cartesianMesh.";
+
+  gid("domSummary").textContent =
+    "domain " + cfdG(e.Lx) + "\u00d7" + cfdG(e.Ly) + "\u00d7" + cfdG(e.Lz) + " m \u00b7 " +
+    r.patches.length + " patches \u00b7 " + r.geomNames.length + " geometry";
+  domPreviewUpdate(r);
+}
+
+let DOM_LAYER = null, DOM_PREVIEW = null;
+
+function domLayerGet() {
+  if (!DOM_LAYER) {
+    DOM_LAYER = new THREE.Group();
+    DOM_LAYER.matrixAutoUpdate = false;
+    DOM_LAYER.matrix.copy(model.matrix);   // same DATCOM-axes -> three.js mapping as the geometry
+    scene.add(DOM_LAYER);
+  }
+  return DOM_LAYER;
+}
+
+function domPreviewClear() {
+  if (!DOM_PREVIEW) return;
+  DOM_PREVIEW.traverse(o => { if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose(); });
+  if (DOM_PREVIEW.parent) DOM_PREVIEW.parent.remove(DOM_PREVIEW);
+  DOM_PREVIEW = null;
+}
+
+const DOM_PATCH_COLOR = {
+  inlet: 0x59d09a, outlet: 0xe06c5c, farfield: 0x4da3ff, symmetry: 0xe0c33c,
+  side_yMin: 0x8d97a5, side_yMax: 0x8d97a5, ground: 0x8d97a5, top: 0x8d97a5
+};
+
+function domPreviewUpdate(r) {
+  domPreviewClear();
+  const show = document.getElementById("dm_show");
+  if (!r || (show && !show.checked)) return;
+  const e = r.extentsRaw;
+  const faces = domBoxFaces(e.x0, e.x1, e.y0, e.y1, e.z0, e.z1);
+  const grp = new THREE.Group();
+  for (const key of Object.keys(faces)) {
+    let dst = (r.routing && r.routing[key]) || "farfield";
+    if (r.symFace === key) dst = "symmetry";
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.Float32BufferAttribute(faces[key], 3));
+    const mat = new THREE.MeshBasicMaterial({
+      color: DOM_PATCH_COLOR[dst] || 0x4da3ff, transparent: true,
+      opacity: dst === "farfield" ? 0.05 : 0.14, side: THREE.DoubleSide, depthWrite: false
+    });
+    grp.add(new THREE.Mesh(geo, mat));
+  }
+  const box = new THREE.BoxGeometry(e.x1 - e.x0, e.y1 - e.y0, e.z1 - e.z0);
+  box.translate((e.x0 + e.x1) / 2, (e.y0 + e.y1) / 2, (e.z0 + e.z1) / 2);
+  grp.add(new THREE.LineSegments(new THREE.EdgesGeometry(box),
+    new THREE.LineBasicMaterial({ color: 0xd0d5dc, transparent: true, opacity: 0.55 })));
+  box.dispose();
+  DOM_PREVIEW = grp;
+  domLayerGet().add(grp);
+}
+
+function domFitView() {
+  if (!domLast) return;
+  const e = domLast.extentsRaw;
+  const box = new THREE.Box3();
+  const P = (x, y, z) => new THREE.Vector3(x, z, -y);   // DATCOM -> three.js
+  for (const x of [e.x0, e.x1]) for (const y of [e.y0, e.y1]) for (const z of [e.z0, e.z1])
+    box.expandByPoint(P(x, y, z));
+  const ctr = box.getCenter(new THREE.Vector3());
+  const rad = box.getSize(new THREE.Vector3()).length() / 2 || 1;
+  const d = rad / Math.sin(camera.fov * D2R / 2) * 1.12;
+  let v = camera.position.clone().sub(controls.target);
+  if (v.lengthSq() < 1e-12) v = VIEWS.iso.clone();
+  camera.position.copy(ctr).add(v.normalize().multiplyScalar(d));
+  controls.target.copy(ctr);
+  camera.near = d / 400; camera.far = d * 40; camera.updateProjectionMatrix();
+  controls.update();
+}
+
+function domInit() {
+  if (domBuilt) { domPartsCache = null; return; }
+  document.getElementById("domLeft").innerHTML = DOM_FORM_HTML;
+  domBuilt = true;
+  document.querySelectorAll("#domLeft input,#domLeft select").forEach(el => {
+    el.addEventListener("input", domGenerate);
+    el.addEventListener("change", domGenerate);
+  });
+  document.getElementById("dm_vis").addEventListener("change", () => { domPartsCache = null; });
+  document.getElementById("dm_show").addEventListener("change", () => domPreviewUpdate(domLast));
+  document.getElementById("domView").onclick = () => {
+    if (!domLast) return;
+    const sh = document.getElementById("dm_show"); if (sh) sh.checked = true;
+    domPreviewUpdate(domLast);
+    cbShow("geom");
+    domFitView();
+  };
+  document.getElementById("dm_gunit").addEventListener("change", e => {
+    document.getElementById("dm_scale").value = cfdG(cfdUnitMetres(e.target.value));
+  });
+  // seed units/scale/filename from the loaded deck
+  try {
+    const cse = (typeof CASES !== "undefined") ? CASES[CASE_I] : null;
+    if (cse && cse.units) {
+      document.getElementById("dm_gunit").value = cse.units.toUpperCase();
+      document.getElementById("dm_scale").value = cfdG(cfdUnitMetres(cse.units));
+    }
+    if (typeof exportStem === "function")
+      document.getElementById("dm_name").value = exportStem() + "_domain.stl";
+  } catch (e) { /* no deck yet */ }
+
+  document.getElementById("domSave").onclick = () => {
+    if (!domLastStl) return;
+    const name = (document.getElementById("dm_name").value || "cfd_domain.stl").replace(/[^\w.-]+/g, "_");
+    const blob = new Blob([domLastStl], { type: "model/stl" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob); a.download = name.replace(/\.stl$/i, "") + ".stl";
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  };
+  document.getElementById("domCopy").onclick = () => {
+    const rx = domLast ? domLast.geomNames.join("|") : "";
+    navigator.clipboard.writeText(rx).then(() => {
+      const b = document.getElementById("domCopy"), o = b.textContent;
+      b.textContent = "Copied"; setTimeout(() => { b.textContent = o; }, 1200);
+    });
+  };
+  document.getElementById("domUseCfd").onclick = () => {
+    if (!domLast) return;
+    if (typeof cfdInit === "function") cfdInit();
+    const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
+    const box = domLast.boxNames.slice();
+    const hasSym = box.indexOf("symmetry") >= 0;
+    const ffSet = box.filter(n => n !== "inlet" && n !== "outlet" && n !== "symmetry");
+    let ff = ffSet.length === 0 ? "farfield"
+           : ffSet.length === 1 ? ffSet[0]
+           : '"(' + ffSet.join("|") + ')"';
+    set("cf_surf", "constant/triSurface/" + (document.getElementById("dm_name").value || "cfd_domain.stl"));
+    set("cf_wall", domLast.geomNames.join("|") || "geometry");
+    set("cf_ff", ff);
+    if (typeof cfdRefreshPatches === "function") cfdRefreshPatches();   // rebuild the Refine-patch dropdown
+    set("cf_obj", domLast.geomNames[0] || "geometry");
+    cfdLoadPatchRefine();
+    if (document.getElementById("cf_scale")) document.getElementById("cf_scale").value = "1";
+    if (hasSym) {
+      const s = document.getElementById("cf_sym"); if (s) s.checked = true;
+      set("cf_symName", "symmetry");
+    }
+    if (typeof cfdGenerate === "function") cfdGenerate();
+    const b = document.getElementById("domUseCfd"), o = b.textContent;
+    b.textContent = "Sent \u2192 CFD tab"; setTimeout(() => { b.textContent = o; }, 1400);
+  };
+}
 
 </script>
 </body>
