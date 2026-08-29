@@ -160,6 +160,24 @@ harvest and puts your view back afterwards.
 Overrides belong to the deck and case they were set on, so loading a deck or switching
 case clears them.
 
+### Rounding the base edge
+
+The 90° edge where the body meets its flat base is a feature-edge a surface mesher has
+to resolve. **Round body base** rolls it into a quarter-round fillet so the base ring is
+a curve rather than a corner. The value is a fraction of the base radius; the fillet is
+added at the base and the base plane moves aft by that radius. The drawing stays faithful
+to the deck — the rounding is applied only while the harvest runs.
+
+Tick **Show rounding in the 3D view** to see and tune it before you download; untick it
+and the viewer goes back to the deck geometry while the export still rounds.
+
+The **Domain** tab carries the same control, under *Edge rounding*, acting on the surface
+written into the CFD domain STL — the mesh you actually build on. It is independent of the
+setting here, and the domain box is fitted around the rounded surface. Leading- and
+trailing-edge rounding is deliberately **not** offered: a robust airfoil-edge round needs
+a true tangent fillet rather than the blunt cap that is cheap to generate, so that is left
+to the mesher or CAD downstream.
+
 ### What you are getting
 
 Facet normals follow right-hand winding throughout, and zero-area triangles — the
@@ -190,6 +208,36 @@ between airfoil sections — is what people actually want, and it is genuinely a
 program: a second geometry pipeline built from the parsed deck rather than from the
 display mesh, plus watertight consistently-oriented topology. Worth doing one day; not a
 variation on this.
+
+## CFD setup (OpenFOAM / HISA + cfMesh)
+
+Three tabs turn a parsed deck into an external-aerodynamics case. **Domain** builds a
+rectangular farfield around the geometry and writes it, with the box baked in and scaled to
+metres, as a multi-solid ASCII STL whose solid names become the mesh patches. **Mesh**
+writes the cfMesh `meshDict` and a `mesh.sh` that runs `cartesianMesh`. **Case** writes the
+HISA solver case (the `0/`, `constant/` and `system/` solver dictionaries) and a `run.sh`.
+
+Case and mesh setup are split so the two halves are independent: each tab has its own
+generated script and Save button, both targeting the same case directory. Mesh first, then
+solve — `bash setup_mesh_*.sh` then `bash setup_*.sh`, then `mesh.sh` and `run.sh` on the
+OpenFOAM box. The surfaceFile the mesh reads defaults to the Domain tab's STL; **Use in CFD
+tab** on the Domain tab points it there and copies the patch names across.
+
+### Refinement zones
+
+The Mesh tab's *Refinement zones* build a cfMesh `objectRefinements` block — volume regions
+refined more finely than `maxCellSize`. Each zone is a **cone** (two axis points and a
+radius at each, so it also covers cylinders and truncated cones), a **box** (centre and the
+three side lengths) or a **sphere** (centre and radius), refined either by a number of extra
+levels or to an absolute `cellSize`, with an optional `refinementThickness` that grows the
+zone outward. This follows the cfMesh User Guide (§4.3) and the shipped example `meshDict`;
+the guide's `line` and `hollowCone` primitives are not offered yet but drop in the same way.
+
+Coordinates are in **metres, DATCOM axes** (+X aft, +Y starboard, +Z up) — the same space as
+the domain STL the mesh reads, so a cone at `p0 (0.025 0 0)` in the dict is the same point you
+typed. **View zones in 3D** overlays them on the Geometry tab as wireframes; because the
+viewer draws in deck units, the preview divides by the geometry unit selector to line the
+zones up with the model, while the dict still emits the metres you entered.
 
 ## Case builder
 
