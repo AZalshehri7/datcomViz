@@ -126,6 +126,19 @@
     font-size:11px;color:var(--dim);white-space:pre-line}
   #domPane{position:absolute;inset:0;display:none;overflow:hidden}
   #domPane.on{display:flex}
+  #meshPane{position:absolute;inset:0;display:none;overflow:hidden}
+  #meshPane.on{display:flex}
+  #meshLeft{width:52%;min-width:380px;overflow-y:auto;padding:14px 16px;border-right:1px solid var(--line)}
+  #meshRight{flex:1;display:flex;flex-direction:column;min-width:0}
+  #meshBar{display:flex;gap:6px;align-items:center;flex-wrap:wrap;padding:10px 14px;border-bottom:1px solid var(--line)}
+  #meshOut{flex:1;margin:0;padding:12px 14px;overflow:auto;white-space:pre;
+    font:11.5px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#c3ccd8}
+  #meshLeft h4{margin:15px 0 7px;font-size:11px;color:var(--accent);text-transform:uppercase;letter-spacing:.6px}
+  #meshLeft h4:first-child{margin-top:0}
+  .zone{border:1px solid var(--line);border-radius:6px;padding:8px 9px;margin:7px 0;background:var(--panel2)}
+  .zone .zhead{display:flex;gap:6px;align-items:center;margin-bottom:5px}
+  .zone .zhead input[type=text]{flex:1;min-width:0}
+  .zone .zdel{padding:2px 8px}
   #domLeft{width:52%;min-width:380px;overflow-y:auto;padding:14px 16px;border-right:1px solid var(--line)}
   #domRight{flex:1;display:flex;flex-direction:column;min-width:0}
   #domBar{display:flex;gap:6px;align-items:center;flex-wrap:wrap;padding:10px 14px;border-bottom:1px solid var(--line)}
@@ -259,6 +272,17 @@
           </select>
         </div>
         <label class="chk" style="margin-top:7px"><input type="checkbox" id="exVisible" checked> Only the components ticked above</label>
+        <div id="exRound" style="margin-top:8px;border-top:1px solid var(--line);padding-top:8px">
+          <label class="chk"><input type="checkbox" id="rndOn"> Round body base for export</label>
+          <div id="rndOpts" style="display:none;margin-top:6px">
+            <div class="row" style="align-items:center;gap:6px">
+              <span class="sub" style="flex:1">Body base</span>
+              <input type="text" id="rndBase" value="0" style="width:52px;text-align:right"> <span class="sub">% radius</span>
+            </div>
+            <label class="chk" style="margin-top:6px"><input type="checkbox" id="rndPreview"> Show rounding in the 3D view</label>
+            <div class="sub" style="margin-top:4px;line-height:1.4">Rolls the 90° base edge into a fillet so the mesher meets a curve rather than a corner. Applied to the written file only.</div>
+          </div>
+        </div>
         <div id="exDefl"></div>
         <div class="row" style="margin-top:9px">
           <button id="exBtn" style="flex:1">Download</button>
@@ -293,7 +317,8 @@
     <div id="tabs">
       <button id="tab-geom" class="on">Geometry</button>
       <button id="tab-case">Cases</button>
-      <button id="tab-cfd">CFD (HISA)</button>
+      <button id="tab-cfd">Case (HISA)</button>
+      <button id="tab-mesh">Mesh (cfMesh)</button>
       <button id="tab-dom">Domain</button>
     </div>
     <div id="panes">
@@ -348,6 +373,20 @@
         <pre id="cfdOut"></pre>
       </div>
     </div><!-- /cfdPane -->
+
+    <div id="meshPane">
+      <div id="meshLeft"></div>
+      <div id="meshRight">
+        <div id="meshBar">
+          <span id="meshSummary" class="sub" style="flex:1;min-width:180px;font-size:11px"></span>
+          <button id="meshZonesView" title="Show the refinement zones in the 3D Geometry view">View zones in 3D</button>
+          <button id="meshCopy">Copy</button>
+          <button id="meshSaveDict" title="Save system/meshDict">Save meshDict</button>
+          <button id="meshSaveSh" title="Save the mesh setup script">Save .sh</button>
+        </div>
+        <pre id="meshOut"></pre>
+      </div>
+    </div><!-- /meshPane -->
 
     <div id="domPane">
       <div id="domLeft"></div>
@@ -1177,8 +1216,39 @@ function loft(rings, { capStart = false, capEnd = false, closed = true } = {}) {
   return g;
 }
 
+/* Export-time body-base rounding. `base` is % of the base radius; `apply` is
+   true only while an export harvests (or while preview is on), so the drawing
+   stays faithful to the deck otherwise. */
+const ROUND = { on: false, base: 0, preview: false, apply: false };
+const round_active = () => ROUND.on && ROUND.apply;
+
+/* Roll the body's base corner into a quarter-round fillet of the given radius,
+   so the 90-degree base edge becomes a curve a mesher can capture cleanly.
+   Handles both AXIBOD/ELLBOD stations {w,h,zc} and $BODY ones {w,zu,zl}. */
+function round_body_base(stations, pct) {
+  if (!(pct > 0) || stations.length < 2) return stations;
+  const n = stations.length, last = stations[n - 1];
+  const digital = ("zu" in last) || ("zl" in last);
+  const rw = last.w || 0;
+  const rtop = digital ? Math.abs(isNum(last.zu) ? last.zu : rw) : (isNum(last.h) ? last.h : rw);
+  const rbot = digital ? Math.abs(isNum(last.zl) ? last.zl : rw) : (isNum(last.h) ? last.h : rw);
+  const rmean = 0.5 * (rw + 0.5 * (rtop + rbot));
+  const r = clamp(pct / 100, 0, 0.9) * rmean;
+  if (!(r > 0)) return stations;
+  const out = stations.slice(0, n - 1), M = 6;
+  for (let i = 0; i <= M; i++) {
+    const a = (Math.PI / 2) * (i / M), dx = r * Math.sin(a), sh = r * (1 - Math.cos(a));
+    const st = { x: last.x + dx, w: Math.max(1e-6, rw - sh), zc: last.zc || 0 };
+    if (digital) { st.zu = Math.max(1e-6, rtop - sh); st.zl = -Math.max(1e-6, rbot - sh); }
+    else st.h = Math.max(1e-6, (isNum(last.h) ? last.h : rw) - sh);
+    out.push(st);
+  }
+  return out;
+}
+
 /** Elliptical body mesh from contour stations. */
 function bodyMesh(stations, nSeg = 48, digital = false) {
+  if (round_active() && ROUND.base > 0) stations = round_body_base(stations, ROUND.base);
   const rings = stations.map(s => {
     const ring = [];
     for (let j = 0; j < nSeg; j++) {
@@ -2645,10 +2715,14 @@ function faceNormal(t, i) {
    nothing to lose by leaving them out. */
 let EXPORT_DROPPED = 0;
 
-/** Triangles of one part, in world space, as flat [ax,ay,az, bx,by,bz, ...]. */
+/** Triangles of one part, in DATCOM axes (X aft, Y stbd, Z up), as a flat
+ *  [ax,ay,az, bx,by,bz, ...]. The parts live under the model group, whose
+ *  matrix maps DATCOM into three.js (Y up) for display; undo it here so the
+ *  written mesh and the domain box are in the deck's own axes, not the view's. */
 function harvestPart(part) {
   const tris = [];
   part.group.updateMatrixWorld(true);
+  const to_datcom = model.matrixWorld.clone().invert();
   part.group.traverse(o => {
     if (!o.isMesh || o.userData.isEdge) return;      // the edge overlay is a line set
     const geo = o.geometry;
@@ -2660,7 +2734,7 @@ function harvestPart(part) {
     const t = [];
     for (let i = 0; i < n; i++) {
       const j = idx ? idx.getX(i) : i;
-      v.fromBufferAttribute(pos, j).applyMatrix4(o.matrixWorld);
+      v.fromBufferAttribute(pos, j).applyMatrix4(o.matrixWorld).applyMatrix4(to_datcom);
       t.push(v.x, v.y, v.z);
       if (t.length < 9) continue;
       if (t.every(isFinite) && faceNormal(t, 0).some(c => c !== 0)) tris.push(...t);
@@ -2674,6 +2748,7 @@ function harvestPart(part) {
 /** Every part worth writing, as { name, tris }. Empty parts are dropped. */
 function harvestModel(visibleOnly) {
   EXPORT_DROPPED = 0;
+  model.updateMatrixWorld(true);
   return PARTS
     .filter(p => !visibleOnly || p.visible)
     .map(p => ({ name: p.name, tris: harvestPart(p) }))
@@ -2764,11 +2839,21 @@ function withTrueDeflection(fn) {
   finally { sl.value = was; rebuild(); }
 }
 
+/* Round the sharp edges only for the harvest. If preview is already showing the
+   rounded model there is nothing to swap; otherwise rebuild rounded, run, and
+   put the faithful drawing back. */
+function with_export_rounding(fn) {
+  if (!ROUND.on || ROUND.preview) return fn();
+  ROUND.apply = true; rebuild();
+  try { return fn(); }
+  finally { ROUND.apply = false; rebuild(); }
+}
+
 function exportRun() {
   const note = document.getElementById("exNote");
   if (!PARTS.length) { note.textContent = "Nothing to export — load a deck first."; return; }
   const fmtSel = document.getElementById("exFormat").value;
-  const parts = withTrueDeflection(() => harvestModel(ui("exVisible")));
+  const parts = with_export_rounding(() => withTrueDeflection(() => harvestModel(ui("exVisible"))));
   if (!parts.length) { note.textContent = "No components selected — tick some in Components."; return; }
 
   const cse = CASES[CASE_I];
@@ -3727,27 +3812,45 @@ function cbShow(which) {
   document.getElementById("geomPane").classList.toggle("off", which !== "geom");
   document.getElementById("casePane").classList.toggle("on", which === "case");
   document.getElementById("cfdPane").classList.toggle("on", which === "cfd");
+  document.getElementById("meshPane").classList.toggle("on", which === "mesh");
   document.getElementById("domPane").classList.toggle("on", which === "dom");
   document.getElementById("tab-geom").classList.toggle("on", which === "geom");
   document.getElementById("tab-case").classList.toggle("on", which === "case");
   document.getElementById("tab-cfd").classList.toggle("on", which === "cfd");
+  document.getElementById("tab-mesh").classList.toggle("on", which === "mesh");
   document.getElementById("tab-dom").classList.toggle("on", which === "dom");
   if (which === "case") {
     if (!CB.vars.length) { if (!cbRestore()) cbBuild(); cbRender(); }
     cbGenerate();
   }
-  if (which === "cfd") { cfdInit(); cfdGenerate(); }
+  if (which === "cfd" || which === "mesh") { meshInit(); cfdInit(); cfdGenerate(); }
   if (which === "dom") { domInit(); domGenerate(); }
 }
 document.getElementById("tab-geom").onclick = () => cbShow("geom");
 document.getElementById("tab-case").onclick = () => cbShow("case");
 document.getElementById("tab-cfd").onclick = () => cbShow("cfd");
+document.getElementById("tab-mesh").onclick = () => cbShow("mesh");
 document.getElementById("tab-dom").onclick = () => cbShow("dom");
 document.getElementById("exBtn").onclick = exportRun;
 document.getElementById("exFormat").onchange = () => {
   document.getElementById("exNote").textContent = "";
 };
 document.getElementById("exVisible").onchange = exportSyncPreview;
+
+const rnd_num = (id, hi) => clamp(parseFloat(document.getElementById(id).value) || 0, 0, hi);
+function round_sync() {
+  const was_preview = ROUND.preview;
+  ROUND.on = document.getElementById("rndOn").checked;
+  ROUND.base = rnd_num("rndBase", 90);
+  ROUND.preview = ROUND.on && document.getElementById("rndPreview").checked;
+  ROUND.apply = ROUND.preview;
+  document.getElementById("rndOpts").style.display = ROUND.on ? "" : "none";
+  if (ROUND.preview || was_preview) { rebuild(); }
+  exportSyncPreview();
+}
+["rndOn", "rndPreview"].forEach(id => document.getElementById(id).onchange = round_sync);
+["rndBase"].forEach(id => document.getElementById(id).oninput = round_sync);
+
 document.getElementById("relSel").onchange = e => relSet(e.target.value, true);
 relSet((() => { try { return localStorage.getItem(REL_KEY); } catch (e) { return null; } })(), false);
 document.getElementById("cbRepeat").onchange = e => { CB.repeat = e.target.checked; cbGenerate(); };
@@ -4225,6 +4328,7 @@ function cfdFileMeshDict(cfg) {
       s += "}\n\n";
     }
   }
+  if (cfg.zones && cfg.zones.length) s += cfdZonesBlock(cfg.zones);
   if (cfg.layers) {
     const blp = refs.length ? refs.map(r => r.patch) : [cfg.obj];
     s += "boundaryLayers\n{\n    patchBoundaryLayers\n    {\n";
@@ -4239,78 +4343,67 @@ function cfdFileMeshDict(cfg) {
   return s;
 }
 
-/* ---- makeDomain.sh : body STL + farfield box -> closed domain ---------- */
+/* ---- objectRefinements (refinement zones, cfMesh User Guide 4.3) -------- */
 
-function cfdMakeDomainScript(cfg) {
+function cfdVec(a) {
+  a = a || [];
+  return "(" + cfdG(a[0] || 0) + " " + cfdG(a[1] || 0) + " " + cfdG(a[2] || 0) + ")";
+}
+
+function cfdZoneBody(z) {
+  let b = "";
+  if (z.mode === "cell") b += "        cellSize    " + cfdG(z.val) + ";\n";
+  else b += "        additionalRefinementLevels  " + Math.max(0, Math.round(z.val || 0)) + ";\n";
+  b += "        type        " + z.type + ";\n";
+  if (z.type === "cone") {
+    b += "        p0          " + cfdVec(z.p0) + ";\n";
+    b += "        p1          " + cfdVec(z.p1) + ";\n";
+    b += "        radius0     " + cfdG(z.r0) + ";\n";
+    b += "        radius1     " + cfdG(z.r1) + ";\n";
+  } else if (z.type === "box") {
+    b += "        centre      " + cfdVec(z.c) + ";\n";
+    b += "        lengthX     " + cfdG(z.lx) + ";\n";
+    b += "        lengthY     " + cfdG(z.ly) + ";\n";
+    b += "        lengthZ     " + cfdG(z.lz) + ";\n";
+  } else if (z.type === "sphere") {
+    b += "        centre      " + cfdVec(z.c) + ";\n";
+    b += "        radius      " + cfdG(z.r) + ";\n";
+  }
+  if (z.thickness) b += "        refinementThickness " + cfdG(z.thickness) + ";\n";
+  return b;
+}
+
+function cfdZonesBlock(zones) {
+  let s = "objectRefinements\n{\n";
+  for (const z of zones) {
+    const nm = (z.name || "zone").trim().replace(/[^\w]+/g, "_") || "zone";
+    s += "    " + nm + "\n    {\n" + cfdZoneBody(z) + "    }\n";
+  }
+  return s + "}\n\n";
+}
+
+/* ---- top-level generated scripts (case setup + mesh setup, split) ------- */
+
+function cfdScriptHead(cfg, title) {
   return [
     "#!/bin/bash",
-    "# Auto-generated by datcomViz CFD tab.",
-    "# Wrap the exported body STL in a farfield box so cartesianMesh has a",
-    "# closed outer boundary for external flow, and scale to metres.",
+    "# =====================================================================",
+    "#  " + title + "  --  generated by datcomViz",
+    "#  Geometry : " + (cfg.deckName || "(DATCOM export)"),
+    "#  Regime   : Mach " + cfdG(cfg.mach) + "  alt " + cfdG(cfg.altM) + " m  " +
+      "alpha " + cfdG(cfg.alpha) + " deg  beta " + cfdG(cfg.beta) + " deg",
+    "#  Axes     : DATCOM  +X aft, +Y starboard, +Z up  (mesh in metres)",
+    "# =====================================================================",
     "set -e",
     "SELF=\"$(cd \"$(dirname \"$0\")\" && pwd)\"",
-    "TRI=\"$SELF/constant/triSurface\"",
-    "BODY=\"${1:-$TRI/body_raw.stl}\"",
-    "OBJ=\"" + cfg.obj + "\"",
-    "FF=\"" + cfg.ff + "\"",
-    "SCALE=\"" + cfdG(cfg.scale) + "\"",
-    "MULT=\"" + cfdG(cfg.ffMult) + "\"",
-    "OUT=\"$TRI/domain.stl\"",
-    "",
-    "if [ ! -f \"$BODY\" ]; then echo \"Body STL not found: $BODY\"; echo \"Export an ASCII STL from datcomViz and place it there (or pass its path).\"; exit 1; fi",
-    "",
-    "# 1. Ensure ASCII STL (needs OpenFOAM surfaceConvert if the export was binary).",
-    "if head -c 5 \"$BODY\" | grep -qi solid; then cp \"$BODY\" \"$TRI/_body_ascii.stl\";",
-    "else surfaceConvert \"$BODY\" \"$TRI/_body_ascii.stl\"; fi",
-    "",
-    "# 2. Rename solid to $OBJ and scale vertices to metres in one awk pass; collect bbox.",
-    "awk -v obj=\"$OBJ\" -v s=\"$SCALE\" '",
-    "  BEGIN{first=1}",
-    "  /^[ \\t]*solid/  {print \"solid \" obj; next}",
-    "  /^[ \\t]*endsolid/{print \"endsolid \" obj; next}",
-    "  /vertex/{x=$2*s;y=$3*s;z=$4*s;",
-    "    if(first){xn=xx=x;yn=yx=y;zn=zx=z;first=0}",
-    "    if(x<xn)xn=x;if(x>xx)xx=x;if(y<yn)yn=y;if(y>yx)yx=y;if(z<zn)zn=z;if(z>zx)zx=z;",
-    "    printf \"      vertex %g %g %g\\n\",x,y,z; next}",
-    "  /facet normal/{print \"  facet normal 0 0 0\"; next}",
-    "  {print}",
-    "  END{print xn,yn,zn,xx,yx,zx > \"'\"$TRI\"'/_bbox.txt\"}",
-    "' \"$TRI/_body_ascii.stl\" > \"$TRI/_body.stl\"",
-    "",
-    "read XN YN ZN XX YX ZX < \"$TRI/_bbox.txt\"",
-    "# 3. Farfield box: body bbox centre, size = MULT * max body extent.",
-    "python3 - \"$XN\" \"$YN\" \"$ZN\" \"$XX\" \"$YX\" \"$ZX\" \"$MULT\" \"$FF\" > \"$TRI/_ff.stl\" <<'PYEOF'",
-    "import sys",
-    "xn,yn,zn,xx,yx,zx,mult=map(float,sys.argv[1:8]); ff=sys.argv[8]",
-    "cx,cy,cz=(xn+xx)/2,(yn+yx)/2,(zn+zx)/2",
-    "L=max(xx-xn,yx-yn,zx-zn)*mult",
-    "h=L/2",
-    "p=[(cx-h,cy-h,cz-h),(cx+h,cy-h,cz-h),(cx+h,cy+h,cz-h),(cx-h,cy+h,cz-h),",
-    "   (cx-h,cy-h,cz+h),(cx+h,cy-h,cz+h),(cx+h,cy+h,cz+h),(cx-h,cy+h,cz+h)]",
-    "q=[(0,1,2),(0,2,3),(4,6,5),(4,7,6),(0,5,1),(0,4,5),(1,6,2),(1,5,6),",
-    "   (2,7,3),(2,6,7),(3,4,0),(3,7,4)]",
-    "print('solid '+ff)",
-    "for a,b,c in q:",
-    "    print(' facet normal 0 0 0'); print('  outer loop')",
-    "    for i in (a,b,c): print('   vertex %g %g %g'%p[i])",
-    "    print('  endloop'); print(' endfacet')",
-    "print('endsolid '+ff)",
-    "PYEOF",
-    "",
-    "# 4. Combine body + farfield into one multi-solid surface.",
-    "cat \"$TRI/_body.stl\" \"$TRI/_ff.stl\" > \"$OUT\"",
-    "rm -f \"$TRI/_body_ascii.stl\" \"$TRI/_body.stl\" \"$TRI/_ff.stl\" \"$TRI/_bbox.txt\"",
-    "echo \"Wrote $OUT  (patches: $OBJ, $FF)\"",
+    "CASE=\"$SELF/" + cfg.caseName + "\"",
     ""
   ].join("\n");
 }
 
-/* ---- top-level generated script ---------------------------------------- */
-
-function cfdBuildScript(cfg) {
+function cfdBuildCaseScript(cfg) {
   const files = [];
   const put = (path, body) => files.push("cat > \"$CASE/" + path + "\" <<'DVZ_EOF'\n" + body + "\nDVZ_EOF\n");
-
   put("0/include/freestreamConditions", cfdFileFreestream(cfg));
   put("0/U", cfdFileU(cfg));
   put("0/p", cfdFileScalarChar(cfg, "p", "[1 -1 -2 0 0 0 0]", "Pressure"));
@@ -4328,25 +4421,7 @@ function cfdBuildScript(cfg) {
   put("system/controlDict", cfdFileControl(cfg));
   put("system/fvSchemes", cfdFileSchemes(cfg));
   put("system/fvSolution", cfdFileSolution(cfg));
-  put("system/meshDict", cfdFileMeshDict(cfg));
   if (cfg.nSub > 1) put("system/decomposeParDict", cfdFileDecompose(cfg));
-
-  const meshCmd = cfg.nSub > 1
-    ? "decomposePar\nmpirun -np " + cfg.nSub + " hisa -parallel\nreconstructPar"
-    : "hisa";
-
-  const mesh = [
-    "#!/bin/bash",
-    "set -e",
-    "CASE=\"$(cd \"$(dirname \"$0\")\" && pwd)\"",
-    "cd \"$CASE\"",
-    "rm -rf constant/polyMesh processor*",
-    "echo \"Running cartesianMesh...\"; cartesianMesh",
-    "echo \"Running checkMesh...\"; checkMesh",
-    "touch mesh.foam",
-    "echo \"Meshing done.\"",
-    ""
-  ].join("\n");
 
   const run = [
     "#!/bin/bash",
@@ -4361,49 +4436,57 @@ function cfdBuildScript(cfg) {
     ""
   ].join("\n");
 
-  const head = [
-    "#!/bin/bash",
-    "# =====================================================================",
-    "#  OpenFOAM/HISA case setup  --  generated by datcomViz CFD tab",
-    "#  Geometry : " + (cfg.deckName || "(DATCOM export)"),
-    "#  Regime   : Mach " + cfdG(cfg.mach) + "  alt " + cfdG(cfg.altM) + " m  " +
-      "alpha " + cfdG(cfg.alpha) + " deg  beta " + cfdG(cfg.beta) + " deg",
-    "#  U_inf    : (" + cfg.Uvec + ") m/s   |U|=" + cfdG(cfg.V) + "   p=" + cfdG(cfg.pInf) + " Pa   T=" + cfdG(cfg.TInf) + " K",
-    "#  Axes     : DATCOM  +X aft, +Y starboard, +Z up  (mesh scaled to metres)",
-    "# =====================================================================",
-    "set -e",
-    "SELF=\"$(cd \"$(dirname \"$0\")\" && pwd)\"",
-    "CASE=\"$SELF/" + cfg.caseName + "\"",
-    "",
-    "mkdir -p \"$CASE/0/include\" \"$CASE/constant/triSurface\" \"$CASE/system\"",
-    ""
-  ].join("\n");
-
-  const sub = [
-    "cat > \"$CASE/makeDomain.sh\" <<'DVZ_EOF'\n" + cfdMakeDomainScript(cfg) + "\nDVZ_EOF\n",
-    "cat > \"$CASE/mesh.sh\" <<'DVZ_EOF'\n" + mesh + "\nDVZ_EOF\n",
-    "cat > \"$CASE/run.sh\" <<'DVZ_EOF'\n" + run + "\nDVZ_EOF\n",
-    "chmod +x \"$CASE\"/makeDomain.sh \"$CASE\"/mesh.sh \"$CASE\"/run.sh",
-    ""
-  ].join("\n");
-
+  const head = cfdScriptHead(cfg, "OpenFOAM/HISA solver case") +
+    "\nmkdir -p \"$CASE/0/include\" \"$CASE/constant\" \"$CASE/system\"\n\n";
+  const sub = "cat > \"$CASE/run.sh\" <<'DVZ_EOF'\n" + run + "\nDVZ_EOF\n" +
+    "chmod +x \"$CASE\"/run.sh\n\n";
   const tail = [
-    "# Drop the exported body STL in if it sits beside this script.",
-    "for f in \"" + (cfg.stlName || "") + "\" *-in.stl *.stl; do",
-    "  [ -n \"$f\" ] && [ -f \"$SELF/$f\" ] && cp \"$SELF/$f\" \"$CASE/constant/triSurface/body_raw.stl\" && echo \"Copied $f -> constant/triSurface/body_raw.stl\" && break",
+    "echo \"\"",
+    "echo \"Solver case written to: $CASE\"",
+    "echo \"Mesh it first (see the Mesh tab's setup script), then:\"",
+    "echo \"  bash $CASE/run.sh                 # hisa" + (cfg.nSub > 1 ? " in parallel" : "") + "\"",
+    ""
+  ].join("\n");
+  return head + files.join("") + sub + tail;
+}
+
+function cfdBuildMeshScript(cfg) {
+  const put = (path, body) => "cat > \"$CASE/" + path + "\" <<'DVZ_EOF'\n" + body + "\nDVZ_EOF\n";
+  const files = put("system/meshDict", cfdFileMeshDict(cfg));
+
+  const mesh = [
+    "#!/bin/bash",
+    "set -e",
+    "CASE=\"$(cd \"$(dirname \"$0\")\" && pwd)\"",
+    "cd \"$CASE\"",
+    "rm -rf constant/polyMesh",
+    "# cartesianMesh is shared-memory parallel and uses all cores by default",
+    "# (set OMP_NUM_THREADS to cap it).",
+    "echo \"Running cartesianMesh...\"; cartesianMesh",
+    "echo \"Running checkMesh...\"; checkMesh",
+    "touch mesh.foam",
+    "echo \"Meshing done.\"",
+    ""
+  ].join("\n");
+
+  const head = cfdScriptHead(cfg, "cfMesh mesh setup") +
+    "\nmkdir -p \"$CASE/constant/triSurface\" \"$CASE/system\"\n\n";
+  const sub = "cat > \"$CASE/mesh.sh\" <<'DVZ_EOF'\n" + mesh + "\nDVZ_EOF\n" +
+    "chmod +x \"$CASE\"/mesh.sh\n\n";
+  const tail = [
+    "# Drop the exported domain STL in if it sits beside this script.",
+    "for f in \"" + (cfg.stlName || "") + "\" *_domain.stl *-domain.stl *.stl; do",
+    "  [ -n \"$f\" ] && [ -f \"$SELF/$f\" ] && cp \"$SELF/$f\" \"$CASE/" + cfg.surf + "\" && echo \"Copied $f -> " + cfg.surf + "\" && break",
     "done",
     "",
     "echo \"\"",
-    "echo \"Case written to: $CASE\"",
-    "echo \"Next steps (on your OpenFOAM + cfMesh + HISA machine):\"",
-    "echo \"  1. Put the ASCII STL export at $CASE/constant/triSurface/body_raw.stl\"",
-    "echo \"  2. bash $CASE/makeDomain.sh          # wraps body in a farfield box, scales to m\"",
-    "echo \"  3. bash $CASE/mesh.sh                # cartesianMesh + checkMesh\"",
-    "echo \"  4. bash $CASE/run.sh                 # hisa" + (cfg.nSub > 1 ? " in parallel" : "") + "\"",
+    "echo \"Mesh setup written to: $CASE\"",
+    "echo \"Next steps (on your OpenFOAM + cfMesh machine):\"",
+    "echo \"  1. Put the Domain-tab STL (farfield box baked in, scaled to m) at $CASE/" + cfg.surf + "\"",
+    "echo \"  2. bash $CASE/mesh.sh                # cartesianMesh + checkMesh\"",
     ""
   ].join("\n");
-
-  return head + files.join("") + sub + tail;
+  return head + files + sub + tail;
 }
 
 /* export for node test */
@@ -4411,6 +4494,9 @@ function cfdBuildScript(cfg) {
 /* ---- CFD tab: form + wiring -------------------------------------------- */
 
 let cfdBuilt = false, cfdLastScript = "";
+let cfdCaseScript = "", cfdMeshScript = "", cfdMeshDictText = "";
+let meshBuilt = false;
+let MESH_ZONES = [];   // refinement zones (objectRefinements), coords in metres, DATCOM axes
 let cfdRefine = {};   // patch name -> { levels, thickness }
 
 function cfdPatchList() {
@@ -4477,21 +4563,6 @@ const CFD_FORM_HTML = [
   '<div class="cfrow"><label>Post fields (yPlus, Cp, Ma, Q)</label><input type="checkbox" id="cf_post" checked></div>',
   '<div class="cfrow"><label>Subdomains (1=serial)</label><input type="text" class="short" id="cf_nsub" value="4"></div>',
 
-  '<h4>Mesh (cfMesh)</h4>',
-  '<div class="cfrow"><label>surfaceFile</label><input type="text" id="cf_surf" value="constant/triSurface/domain.stl"></div>',
-  '<div class="cfrow"><label>Geometry units</label><select id="cf_gunit"><option value="M">M</option><option value="FT">FT</option><option value="IN">IN</option><option value="CM">CM</option><option value="MM">MM</option></select></div>',
-  '<div class="cfrow"><label>Scale to metres</label><input type="text" class="short" id="cf_scale" value="1"></div>',
-  '<div class="cfrow"><label>Farfield box \u00d7 body</label><input type="text" class="short" id="cf_ffmult" value="20"></div>',
-  '<div class="cfrow"><label>maxCellSize [m]</label><input type="text" class="short" id="cf_maxcell" value="0.2"></div>',
-  '<div class="cfrow"><label>boundaryCellSize [m]</label><input type="text" class="short" id="cf_bcell" value=""></div>',
-  '<div class="cfrow"><label>Refine patch</label><select id="cf_obj"></select></div>',
-  '<div class="cfrow"><label>Local refine levels</label><input type="text" class="short" id="cf_loclev" value="6"></div>',
-  '<div class="cfrow"><label>Refine thickness [m]</label><input type="text" class="short" id="cf_locthick" value="0.05"></div>',
-  '<div class="cfrow"><label>Boundary layers</label><input type="checkbox" id="cf_layers" checked></div>',
-  '<div class="cfrow"><label>nLayers</label><input type="text" class="short" id="cf_nlayers" value="10"></div>',
-  '<div class="cfrow"><label>thicknessRatio</label><input type="text" class="short" id="cf_tratio" value="1.2"></div>',
-  '<div class="cfrow"><label>maxFirstLayer [m]</label><input type="text" class="short" id="cf_first" value=""></div>',
-
   '<h4>Advanced numerics (HiSA manual)</h4>',
   '<div class="cfrow"><label>Turbulence div scheme</label><select id="cf_turbdiv"><option value="upwind">upwind (1st order)</option><option value="limitedLinear">limitedLinear 1</option></select></div>',
   '<div class="cfrow"><label>Real-time scheme (transient)</label><select id="cf_rtscheme"><option value="backward">backward</option><option value="Euler">Euler</option><option value="CrankNicolson">CrankNicolson</option></select></div>',
@@ -4538,7 +4609,6 @@ function cfdGenerate() {
   const kInit = 1.5 * Math.pow(ti * V, 2);
   const omegaInit = Math.sqrt(kInit) / (Math.pow(0.09, 0.25) * lref);
 
-  const gunit = V_("cf_gunit"), scale = N_("cf_scale", cfdUnitMetres(gunit));
   // sync the editor (selected patch) into the per-patch map, then build the list
   const selPatch = (gid("cf_obj") || {}).value;
   const locLevels = Math.round(N_("cf_loclev", 6));
@@ -4574,16 +4644,24 @@ function cfdGenerate() {
     pitchAxis: "0 1 0", cofr: V_("cf_cofr") || "0 0 0",
     Aref: N_("cf_aref", 1), lRefF: N_("cf_lreff", 1),
     nSub: Math.max(1, Math.round(N_("cf_nsub", 4))),
-    surf: V_("cf_surf") || "constant/triSurface/domain.stl", obj: V_("cf_obj") || "geometry",
-    scale, ffMult: N_("cf_ffmult", 20),
+    surf: V_("cf_surf") || "constant/triSurface/cfd_domain.stl", obj: V_("cf_obj") || "geometry",
     maxCell: N_("cf_maxcell", 0.2), bCell: V_("cf_bcell") ? N_("cf_bcell", 0) : "",
     locLevels, locThick, refinements,
     layers: gid("cf_layers").checked, nLayers: Math.round(N_("cf_nlayers", 10)),
-    tratio: N_("cf_tratio", 1.2), firstLayer: V_("cf_first") ? N_("cf_first", 0) : ""
+    tratio: N_("cf_tratio", 1.2), firstLayer: V_("cf_first") ? N_("cf_first", 0) : "",
+    zones: (typeof MESH_ZONES !== "undefined") ? MESH_ZONES : []
   };
 
-  cfdLastScript = cfdBuildScript(cfg);
-  gid("cfdOut").textContent = cfdLastScript;
+  cfdCaseScript = cfdBuildCaseScript(cfg);
+  cfdMeshScript = cfdBuildMeshScript(cfg);
+  cfdMeshDictText = cfdFileMeshDict(cfg);
+  cfdLastScript = cfdCaseScript;
+  gid("cfdOut").textContent = cfdCaseScript;
+  const mo = gid("meshOut"); if (mo) mo.textContent = cfdMeshScript;
+  const ms = gid("meshSummary");
+  if (ms) ms.textContent = "cfMesh \u00b7 maxCellSize " + cfdG(cfg.maxCell) + " m \u00b7 " +
+    cfg.zones.length + " zone" + (cfg.zones.length === 1 ? "" : "s") + (cfg.layers ? " \u00b7 layers" : "");
+  if (typeof meshZonesPreviewUpdate === "function") meshZonesPreviewUpdate();
   gid("cfdSummary").textContent =
     "M " + cfdG(mach) + " \u00b7 alt " + cfdG(altM) + " m \u00b7 \u03b1 " + cfdG(alpha) +
     "\u00b0 \u00b7 \u03b2 " + cfdG(beta) + "\u00b0  \u2192  |U|=" + cfdG(V) + " m/s, p=" +
@@ -4606,7 +4684,6 @@ function cfdPullFromDeck() {
     if (alpha) gid("cf_alpha").value = alpha[0];
     if (alt) gid("cf_alt").value = alt[0];
     if (beta !== undefined && beta !== null) gid("cf_beta").value = beta;
-    if (cse.units) { gid("cf_gunit").value = cse.units.toUpperCase(); gid("cf_scale").value = cfdG(cfdUnitMetres(cse.units)); }
     if (typeof exportStem === "function") {
       gid("cf_name").value = (exportStem() + "_cfd").replace(/[^\w.-]+/g, "_");
     }
@@ -4619,16 +4696,12 @@ function cfdInit() {
   document.getElementById("cfdLeft").innerHTML = CFD_FORM_HTML;
   cfdBuilt = true;
   document.querySelectorAll("#cfdLeft input,#cfdLeft select,#cfdLeft textarea").forEach(el => {
-    if (el.id === "cf_obj" || el.id === "cf_wall") return;   // handled below (order matters)
+    if (el.id === "cf_wall") return;   // handled below (order matters)
     el.addEventListener("input", cfdGenerate);
     el.addEventListener("change", cfdGenerate);
   });
-  document.getElementById("cf_obj").addEventListener("change", () => { cfdLoadPatchRefine(); cfdGenerate(); });
   ["input", "change"].forEach(ev =>
     document.getElementById("cf_wall").addEventListener(ev, () => { cfdRefreshPatches(); cfdGenerate(); }));
-  document.getElementById("cf_gunit").addEventListener("change", e => {
-    document.getElementById("cf_scale").value = cfdG(cfdUnitMetres(e.target.value));
-  });
   document.getElementById("cfdPull").onclick = cfdPullFromDeck;
   document.getElementById("cfdCopy").onclick = () => {
     navigator.clipboard.writeText(cfdLastScript || document.getElementById("cfdOut").textContent).then(() => {
@@ -4648,6 +4721,245 @@ function cfdInit() {
   if (typeof CASES !== "undefined" && CASES.length) cfdPullFromDeck();
 }
 
+
+/* ===== datcomViz Mesh tab (cfMesh settings + refinement zones) ===== */
+
+const MESH_FORM_HTML = [
+  '<h4>Mesh (cfMesh)</h4>',
+  '<div class="cfrow"><label>surfaceFile</label><input type="text" id="cf_surf" value="constant/triSurface/cfd_domain.stl"></div>',
+  '<div class="cfrow"><label>maxCellSize [m]</label><input type="text" class="short" id="cf_maxcell" value="0.2"></div>',
+  '<div class="cfrow"><label>boundaryCellSize [m]</label><input type="text" class="short" id="cf_bcell" value=""></div>',
+  '<div class="cfrow"><label>Refine patch</label><select id="cf_obj"></select></div>',
+  '<div class="cfrow"><label>Local refine levels</label><input type="text" class="short" id="cf_loclev" value="6"></div>',
+  '<div class="cfrow"><label>Refine thickness [m]</label><input type="text" class="short" id="cf_locthick" value="0.05"></div>',
+  '<div class="cfrow"><label>Boundary layers</label><input type="checkbox" id="cf_layers" checked></div>',
+  '<div class="cfrow"><label>nLayers</label><input type="text" class="short" id="cf_nlayers" value="10"></div>',
+  '<div class="cfrow"><label>thicknessRatio</label><input type="text" class="short" id="cf_tratio" value="1.2"></div>',
+  '<div class="cfrow"><label>maxFirstLayer [m]</label><input type="text" class="short" id="cf_first" value=""></div>',
+
+  '<h4>Refinement zones (objectRefinements)</h4>',
+  '<div class="sub" style="line-height:1.45;margin-bottom:4px">Volume zones refined with a cell size or extra levels. Coordinates are in <b>metres</b>, DATCOM axes (+X aft, +Y stbd, +Z up) \u2014 same space as the domain STL the mesh reads.</div>',
+  '<div class="cfrow"><label>Geometry units (preview only)</label><select id="mesh_gunit"><option value="M">M</option><option value="FT">FT</option><option value="IN">IN</option><option value="CM">CM</option><option value="MM">MM</option></select></div>',
+  '<div id="zoneList"></div>',
+  '<button id="zoneAdd" style="margin-top:6px">+ Add zone</button>'
+].join("");
+
+function meshVec(s) {
+  const a = String(s == null ? "" : s).trim().split(/[\s,]+/).map(parseFloat);
+  return [a[0] || 0, a[1] || 0, a[2] || 0];
+}
+
+function meshZoneDefault(type) {
+  const t = type || "cone";
+  const base = { name: "", type: t, mode: "levels", val: 4, thickness: "" };
+  if (t === "box") return Object.assign(base, { c: [0, 0, 0], lx: 1, ly: 1, lz: 1 });
+  if (t === "sphere") return Object.assign(base, { c: [0, 0, 0], r: 0.5 });
+  return Object.assign(base, { p0: [0, 0, 0], p1: [1, 0, 0], r0: 0.1, r1: 0.1 });
+}
+
+function meshZoneGeomHtml(i, z) {
+  const num = (id, v) => '<input type="text" class="short" id="z' + i + '_' + id + '" value="' + v + '">';
+  const vec = (id, v) => '<input type="text" id="z' + i + '_' + id + '" value="' + (v || [0, 0, 0]).join(" ") + '" style="width:130px">';
+  const row = (lab, inner) => '<div class="cfrow"><label>' + lab + '</label>' + inner + '</div>';
+  if (z.type === "box")
+    return row("centre (x y z)", vec("c", z.c)) + row("lengthX", num("lx", z.lx)) +
+           row("lengthY", num("ly", z.ly)) + row("lengthZ", num("lz", z.lz));
+  if (z.type === "sphere")
+    return row("centre (x y z)", vec("c", z.c)) + row("radius", num("r", z.r));
+  return row("p0 (x y z)", vec("p0", z.p0)) + row("p1 (x y z)", vec("p1", z.p1)) +
+         row("radius0", num("r0", z.r0)) + row("radius1", num("r1", z.r1));
+}
+
+function meshRenderZones() {
+  const host = document.getElementById("zoneList");
+  if (!host) return;
+  let html = "";
+  MESH_ZONES.forEach((z, i) => {
+    const opt = (val, cur, lab) => '<option value="' + val + '"' + (cur === val ? " selected" : "") + '>' + (lab || val) + '</option>';
+    html += '<div class="zone">';
+    html += '<div class="zhead">';
+    html += '<input type="text" id="z' + i + '_name" value="' + (z.name || "") + '" placeholder="zone ' + (i + 1) + '">';
+    html += '<select id="z' + i + '_type">' + opt("cone", z.type) + opt("box", z.type) + opt("sphere", z.type) + '</select>';
+    html += '<button class="zdel" id="z' + i + '_del">\u2715</button>';
+    html += '</div>';
+    html += '<div class="cfrow"><label>Refine by</label><span style="display:flex;gap:6px">' +
+            '<select id="z' + i + '_mode" style="width:96px">' + opt("levels", z.mode, "levels") + opt("cell", z.mode, "cellSize") + '</select>' +
+            '<input type="text" class="short" id="z' + i + '_val" value="' + z.val + '" style="width:70px"></span></div>';
+    html += meshZoneGeomHtml(i, z);
+    html += '<div class="cfrow"><label>refinementThickness [m]</label><input type="text" class="short" id="z' + i + '_thick" value="' + (z.thickness === "" || z.thickness == null ? "" : z.thickness) + '"></div>';
+    html += '</div>';
+  });
+  host.innerHTML = html;
+  MESH_ZONES.forEach((z, i) => {
+    const g = id => document.getElementById("z" + i + "_" + id);
+    const onEdit = () => { meshZoneRead(i); cfdGenerate(); };
+    ["name", "mode", "val", "thick"].forEach(id => { const el = g(id); if (el) { el.oninput = onEdit; el.onchange = onEdit; } });
+    ["c", "lx", "ly", "lz", "r", "p0", "p1", "r0", "r1"].forEach(id => { const el = g(id); if (el) { el.oninput = onEdit; el.onchange = onEdit; } });
+    const ty = g("type"); if (ty) ty.onchange = () => {
+      const nz = meshZoneDefault(ty.value); nz.name = MESH_ZONES[i].name;
+      nz.mode = MESH_ZONES[i].mode; nz.val = MESH_ZONES[i].val; nz.thickness = MESH_ZONES[i].thickness;
+      MESH_ZONES[i] = nz; meshRenderZones(); cfdGenerate();
+    };
+    const del = g("del"); if (del) del.onclick = () => { MESH_ZONES.splice(i, 1); meshRenderZones(); cfdGenerate(); };
+  });
+}
+
+function meshZoneRead(i) {
+  const z = MESH_ZONES[i]; if (!z) return;
+  const g = id => document.getElementById("z" + i + "_" + id);
+  const v = id => (g(id) ? g(id).value : "");
+  z.name = v("name");
+  z.mode = (g("mode") && g("mode").value) || "levels";
+  z.val = parseFloat(v("val")) || 0;
+  z.thickness = v("thick") !== "" ? (parseFloat(v("thick")) || 0) : "";
+  if (z.type === "box") { z.c = meshVec(v("c")); z.lx = parseFloat(v("lx")) || 0; z.ly = parseFloat(v("ly")) || 0; z.lz = parseFloat(v("lz")) || 0; }
+  else if (z.type === "sphere") { z.c = meshVec(v("c")); z.r = parseFloat(v("r")) || 0; }
+  else { z.p0 = meshVec(v("p0")); z.p1 = meshVec(v("p1")); z.r0 = parseFloat(v("r0")) || 0; z.r1 = parseFloat(v("r1")) || 0; }
+}
+
+function meshInit() {
+  if (meshBuilt) return;
+  document.getElementById("meshLeft").innerHTML = MESH_FORM_HTML;
+  meshBuilt = true;
+  document.querySelectorAll("#meshLeft input,#meshLeft select").forEach(el => {
+    if (el.id === "cf_obj" || el.id === "mesh_gunit" || /^z\d/.test(el.id)) return;
+    el.addEventListener("input", cfdGenerate);
+    el.addEventListener("change", cfdGenerate);
+  });
+  document.getElementById("cf_obj").addEventListener("change", () => { cfdLoadPatchRefine(); cfdGenerate(); });
+  document.getElementById("mesh_gunit").addEventListener("change", meshZonesPreviewUpdate);
+  document.getElementById("zoneAdd").onclick = () => { MESH_ZONES.push(meshZoneDefault("cone")); meshRenderZones(); cfdGenerate(); };
+  document.getElementById("meshZonesView").onclick = () => {
+    meshZonesShow = !meshZonesShow;
+    const b = document.getElementById("meshZonesView");
+    b.classList.toggle("on", meshZonesShow);
+    meshZonesPreviewUpdate();
+    if (meshZonesShow) { cbShow("geom"); meshZonesFit(); }
+  };
+  document.getElementById("meshCopy").onclick = () => {
+    navigator.clipboard.writeText(cfdMeshScript || document.getElementById("meshOut").textContent);
+  };
+  document.getElementById("meshSaveDict").onclick = () => meshDownload(cfdMeshDictText || "", "meshDict");
+  document.getElementById("meshSaveSh").onclick = () => {
+    const name = (document.getElementById("cf_name") ? document.getElementById("cf_name").value : "datcom") || "datcom";
+    meshDownload(cfdMeshScript || "", "setup_mesh_" + name.replace(/[^\w.-]+/g, "_") + ".sh");
+  };
+  const gu = document.getElementById("mesh_gunit");
+  try {
+    const cse = (typeof CASES !== "undefined") ? CASES[CASE_I] : null;
+    if (cse && cse.units) gu.value = cse.units.toUpperCase();
+  } catch (e) { /* no deck */ }
+  meshRenderZones();
+}
+
+function meshDownload(text, fname) {
+  const blob = new Blob([text], { type: "text/plain" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = fname;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+}
+
+/* ---- 3D preview of refinement zones (Geometry tab overlay) -------------- */
+
+let ZONE_LAYER = null, ZONE_PREVIEW = null, meshZonesShow = false;
+
+function zoneLayerGet() {
+  if (!ZONE_LAYER) {
+    ZONE_LAYER = new THREE.Group();
+    ZONE_LAYER.matrixAutoUpdate = false;
+    ZONE_LAYER.matrix.copy(model.matrix);   // DATCOM axes -> three.js, same as the geometry
+    scene.add(ZONE_LAYER);
+  }
+  return ZONE_LAYER;
+}
+
+function zonePreviewClear() {
+  if (!ZONE_PREVIEW) return;
+  ZONE_PREVIEW.traverse(o => { if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose(); });
+  if (ZONE_PREVIEW.parent) ZONE_PREVIEW.parent.remove(ZONE_PREVIEW);
+  ZONE_PREVIEW = null;
+}
+
+function meshMetresPerUnit() {
+  const g = document.getElementById("mesh_gunit");
+  return cfdUnitMetres(g ? g.value : "M") || 1;
+}
+
+function zoneCircle(out, C, axis, r, n) {
+  const A = axis.clone(); if (A.lengthSq() < 1e-12) A.set(1, 0, 0); A.normalize();
+  let u = new THREE.Vector3(0, 0, 1).cross(A);
+  if (u.lengthSq() < 1e-6) u = new THREE.Vector3(0, 1, 0).cross(A);
+  u.normalize();
+  const v = A.clone().cross(u).normalize();
+  const pt = t => C.clone().add(u.clone().multiplyScalar(r * Math.cos(t))).add(v.clone().multiplyScalar(r * Math.sin(t)));
+  const loop = [];
+  for (let i = 0; i < n; i++) loop.push(pt(2 * Math.PI * i / n));
+  for (let i = 0; i < n; i++) { const a = loop[i], b = loop[(i + 1) % n]; out.push(a.x, a.y, a.z, b.x, b.y, b.z); }
+  return loop;
+}
+
+function zoneSeg(out, a, b) { out.push(a.x, a.y, a.z, b.x, b.y, b.z); }
+
+function meshZoneWire(out, z, s) {
+  const V = (x, y, z2) => new THREE.Vector3(x * s, y * s, z2 * s);
+  if (z.type === "box") {
+    const c = z.c || [0, 0, 0], hx = (z.lx || 0) / 2, hy = (z.ly || 0) / 2, hz = (z.lz || 0) / 2;
+    const P = [];
+    for (const sx of [-1, 1]) for (const sy of [-1, 1]) for (const sz of [-1, 1])
+      P.push(V(c[0] + sx * hx, c[1] + sy * hy, c[2] + sz * hz));
+    const E = [[0, 1], [1, 3], [3, 2], [2, 0], [4, 5], [5, 7], [7, 6], [6, 4], [0, 4], [1, 5], [2, 6], [3, 7]];
+    for (const [a, b] of E) zoneSeg(out, P[a], P[b]);
+  } else if (z.type === "sphere") {
+    const c = V(z.c[0], z.c[1], z.c[2]), r = (z.r || 0) * s;
+    zoneCircle(out, c, new THREE.Vector3(1, 0, 0), r, 32);
+    zoneCircle(out, c, new THREE.Vector3(0, 1, 0), r, 32);
+    zoneCircle(out, c, new THREE.Vector3(0, 0, 1), r, 32);
+  } else {
+    const p0 = V(z.p0[0], z.p0[1], z.p0[2]), p1 = V(z.p1[0], z.p1[1], z.p1[2]);
+    const axis = p1.clone().sub(p0);
+    const l0 = zoneCircle(out, p0, axis, (z.r0 || 0) * s, 24);
+    const l1 = zoneCircle(out, p1, axis, (z.r1 || 0) * s, 24);
+    for (let k = 0; k < 24; k += 6) zoneSeg(out, l0[k], l1[k]);
+  }
+}
+
+function meshZonesPreviewUpdate() {
+  zonePreviewClear();
+  const b = document.getElementById("meshZonesView"); if (b) b.classList.toggle("on", meshZonesShow);
+  if (!meshZonesShow || !MESH_ZONES.length) return;
+  const s = 1 / meshMetresPerUnit();          // metres -> view (deck) units
+  const pos = [];
+  for (const z of MESH_ZONES) meshZoneWire(pos, z, s);
+  if (!pos.length) return;
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+  const grp = new THREE.Group();
+  grp.add(new THREE.LineSegments(geo, new THREE.LineBasicMaterial({ color: 0xffb454, transparent: true, opacity: 0.9 })));
+  ZONE_PREVIEW = grp;
+  zoneLayerGet().add(grp);
+}
+
+function meshZonesFit() {
+  if (!MESH_ZONES.length) return;
+  const s = 1 / meshMetresPerUnit();
+  const pos = [];
+  for (const z of MESH_ZONES) meshZoneWire(pos, z, s);
+  if (!pos.length) return;
+  const box = new THREE.Box3();
+  const P = (x, y, z) => new THREE.Vector3(x, z, -y);   // DATCOM -> three.js
+  for (let i = 0; i < pos.length; i += 3) box.expandByPoint(P(pos[i], pos[i + 1], pos[i + 2]));
+  if (typeof model !== "undefined") { const mb = new THREE.Box3().setFromObject(model); if (!mb.isEmpty()) box.union(mb); }
+  const ctr = box.getCenter(new THREE.Vector3());
+  const rad = box.getSize(new THREE.Vector3()).length() / 2 || 1;
+  const d = rad / Math.sin(camera.fov * D2R / 2) * 1.12;
+  let v = camera.position.clone().sub(controls.target);
+  if (v.lengthSq() < 1e-12) v = VIEWS.iso.clone();
+  camera.position.copy(ctr).add(v.normalize().multiplyScalar(d));
+  controls.target.copy(ctr);
+  camera.near = d / 400; camera.far = d * 40; camera.updateProjectionMatrix();
+  controls.update();
+}
 
 /* ===== datcomViz Domain tab ===== */
 /* =======================================================================
@@ -4877,6 +5189,10 @@ const DOM_FORM_HTML = [
   '<div class="cfrow"><label>Custom value</label><input type="text" class="short" id="dm_symval" value="0"></div>',
   '<div class="cfrow"><label>Keep side</label><select id="dm_symkeep"><option value="pos">+ side</option><option value="neg">\u2212 side</option></select></div>',
 
+  '<h4>Edge rounding</h4>',
+  '<div class="cfrow"><label>Round body base</label><input type="checkbox" id="dm_round"></div>',
+  '<div class="cfrow"><label>Body base (% radius)</label><input type="text" class="short" id="dm_rbase" value="0"></div>',
+
   '<h4>Output</h4>',
   '<div class="cfrow"><label>Show domain in Geometry view</label><input type="checkbox" id="dm_show" checked></div>',
   '<div class="cfrow"><label>Geometry units</label><select id="dm_gunit"><option value="M">M</option><option value="FT">FT</option><option value="IN">IN</option><option value="CM">CM</option><option value="MM">MM</option></select></div>',
@@ -4884,10 +5200,26 @@ const DOM_FORM_HTML = [
   '<div class="cfrow"><label>File name</label><input type="text" id="dm_name" value="cfd_domain.stl"></div>'
 ].join("");
 
-function domHarvestParts(visibleOnly) {
-  const sig = (typeof DECK !== "undefined" && DECK ? DECK.name : "") + "|" + CASE_I + "|" + (visibleOnly ? "vis" : "all") + "|" + (typeof PARTS !== "undefined" ? PARTS.length : 0);
+/* Pin the base-rounding state for a domain harvest, so the domain STL rounds by
+   its own control and never inherits the Export panel's preview. Rebuilds
+   rounded, runs, then restores whatever the view had. */
+function with_domain_rounding(round, fn) {
+  const save = { on: ROUND.on, base: ROUND.base, apply: ROUND.apply, preview: ROUND.preview };
+  const on = !!(round && round.on && round.base > 0);
+  if (!on && !save.apply) return fn();
+  ROUND.on = on; ROUND.base = round.base || 0; ROUND.apply = on; ROUND.preview = false;
+  rebuild();
+  try { return fn(); }
+  finally { Object.assign(ROUND, save); rebuild(); }
+}
+
+function domHarvestParts(cfg) {
+  const visibleOnly = cfg.visibleOnly;
+  const r = cfg.round || {};
+  const rsig = r.on ? `rb${r.base}` : "r0";
+  const sig = (typeof DECK !== "undefined" && DECK ? DECK.name : "") + "|" + CASE_I + "|" + (visibleOnly ? "vis" : "all") + "|" + (typeof PARTS !== "undefined" ? PARTS.length : 0) + "|" + rsig;
   if (domPartsCache && domCacheSig === sig) return domPartsCache;
-  const parts = withTrueDeflection(() => harvestModel(visibleOnly));
+  const parts = with_domain_rounding(r, () => withTrueDeflection(() => harvestModel(visibleOnly)));
   domPartsCache = parts; domCacheSig = sig;
   return parts;
 }
@@ -4916,6 +5248,10 @@ function domReadCfg() {
       keepPos: V_("dm_symkeep") !== "neg"
     },
     scale: N_("dm_scale", 1),
+    round: {
+      on: gid("dm_round").checked,
+      base: N_("dm_rbase", 0)
+    },
     title: (V_("dm_name") || "cfd_domain").replace(/\.stl$/i, "")
   };
 }
@@ -4932,7 +5268,7 @@ function domGenerate() {
     return;
   }
   const cfg = domReadCfg();
-  const parts = domHarvestParts(cfg.visibleOnly);
+  const parts = domHarvestParts(cfg);
   const r = domBuild(parts, cfg);
   domLast = r; domLastStl = r.stl;
 
@@ -4956,8 +5292,7 @@ function domGenerate() {
     "To use in the CFD (HISA) tab (or click \u201cUse in CFD tab\u201d):\n" +
     "  surfaceFile  =  constant/triSurface/" + (gid("dm_name").value || "cfd_domain.stl") + "\n" +
     "  wall patch   =  " + (wallRegex || "(none)") + "\n" +
-    "  farfield     =  " + (r.boxNames.indexOf("farfield") >= 0 ? "farfield" : boxList) + "\n" +
-    "  (skip makeDomain.sh — this file already includes the farfield box)\n\n" +
+    "  farfield     =  " + (r.boxNames.indexOf("farfield") >= 0 ? "farfield" : boxList) + "\n\n" +
     "Facets: " + r.patches.reduce((a, p) => a + p.ntri, 0).toLocaleString() + "   \u00b7   " +
     "place the saved file at constant/triSurface/ and mesh with cartesianMesh.";
 
@@ -5085,6 +5420,7 @@ function domInit() {
   };
   document.getElementById("domUseCfd").onclick = () => {
     if (!domLast) return;
+    if (typeof meshInit === "function") meshInit();
     if (typeof cfdInit === "function") cfdInit();
     const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
     const box = domLast.boxNames.slice();
@@ -5099,7 +5435,6 @@ function domInit() {
     if (typeof cfdRefreshPatches === "function") cfdRefreshPatches();   // rebuild the Refine-patch dropdown
     set("cf_obj", domLast.geomNames[0] || "geometry");
     cfdLoadPatchRefine();
-    if (document.getElementById("cf_scale")) document.getElementById("cf_scale").value = "1";
     if (hasSym) {
       const s = document.getElementById("cf_sym"); if (s) s.checked = true;
       set("cf_symName", "symmetry");
